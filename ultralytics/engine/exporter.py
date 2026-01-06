@@ -22,6 +22,7 @@ IMX                     | `imx`                     | yolo26n_imx_model/
 RKNN                    | `rknn`                    | yolo26n_rknn_model/
 ExecuTorch              | `executorch`              | yolo26n_executorch_model/
 Axelera AI              | `axelera`                 | yolo26n_axelera_model/
+Mobilint                | `mxq`                     | yolo26n.mxq
 
 Requirements:
     $ pip install "ultralytics[export]"
@@ -52,6 +53,7 @@ Inference:
                          yolo26n_rknn_model         # RKNN
                          yolo26n_executorch_model   # ExecuTorch
                          yolo26n_axelera_model      # Axelera AI
+                         yolo26n_mxq_model          # Mobilint
 
 TensorFlow.js:
     $ cd .. && git clone https://github.com/zldrobit/tfjs-yolov5-example.git && cd tfjs-yolov5-example
@@ -159,6 +161,7 @@ def export_formats():
         ["RKNN", "rknn", "_rknn_model", False, False, ["batch", "name"]],
         ["ExecuTorch", "executorch", "_executorch_model", True, False, ["batch"]],
         ["Axelera AI", "axelera", "_axelera_model", False, False, ["batch", "int8", "fraction", "data"]],
+        ["Mobilint", "mxq", ".mxq", True, True, ["batch", "data"]],
     ]
     return dict(zip(["Format", "Argument", "Suffix", "CPU", "GPU", "Arguments"], zip(*x)))
 
@@ -311,7 +314,17 @@ class Exporter:
         if fmt == "imx" and self.args.device is None and torch.cuda.is_available():
             LOGGER.warning("Exporting on CPU while CUDA is available, setting device=0 for faster export on GPU.")
             self.args.device = "0"  # update device to "0"
-        self.device = select_device("cpu" if self.args.device is None else self.args.device)
+        MXQ_DEVICES = ["aries", "regulus"]
+        if fmt == "mxq":
+            if self.args.device is None:
+                LOGGER.warning("MXQ export requires device arg, setting device='aries'.")
+                LOGGER.warning(f"Valid MXQ devices are {MXQ_DEVICES}.")
+                self.args.device = "aries"
+            elif self.args.device not in MXQ_DEVICES:
+                raise ValueError(f"Invalid device '{self.args.device}' for MXQ export. Valid devices are {MXQ_DEVICES}.")
+        is_mxq_dev = fmt == "mxq" and self.args.device in MXQ_DEVICES
+        is_dev_none = self.args.device is None
+        self.device = select_device("cpu" if is_mxq_dev or is_dev_none else self.args.device)
 
         # Argument compatibility checks
         fmt_keys = dict(zip(fmts_dict["Argument"], fmts_dict["Arguments"]))[fmt]
@@ -338,6 +351,10 @@ class Exporter:
                 raise ValueError(
                     "IMX export only supported for detection, pose estimation, classification, and segmentation models."
                 )
+        if fmt == "mxq":
+            if not self.args.data:
+                LOGGER.warning("MXQ export requires data arg, setting data='coco128.yaml'.")
+                self.args.data = "coco128.yaml"
         if not hasattr(model, "names"):
             model.names = default_class_names()
         model.names = check_class_names(model.names)
@@ -1061,6 +1078,59 @@ class Exporter:
             dataset=partial(self.get_int8_calibration_dataloader, prefix),
             prefix=prefix,
         )
+
+    @try_export
+    def export_mxq(self, prefix=colorstr("MXQ:")):
+        """Export YOLO model to MXQ format."""
+        # qbcompiler_version = f"1.1.2+{self.args.device}torch2.7.1cu128"
+        # check_requirements(f"qbcompiler=={qbcompiler_version}")
+        import tempfile
+        from PIL import Image
+        from ultralytics.utils.export import onnx2mxq
+        MAX_CALIB_SAMPLES = 100
+
+        save_path = os.path.abspath(Path(self.file).with_suffix(".mxq"))
+
+        # Export to ONNX
+        if isinstance(self.model.model[-1], RTDETRDecoder):
+            self.args.opset = self.args.opset or 19
+            assert 16 <= self.args.opset <= 19, "RTDETR export requires opset>=16;<=19"
+        f_onnx = self.export_onnx()  # ensure ONNX is available
+
+        # Prepare calibration data
+        temp_calib_path = tempfile.mkdtemp()
+        if self.args.data:
+            LOGGER.info(f"{prefix} Preparing calibration data in {temp_calib_path}...")
+            images = (img for batch in self.get_int8_calibration_dataloader(prefix) for img in batch["img"])
+            for item_count, img in enumerate(images):
+                img = Image.fromarray(img.permute(1, 2, 0).numpy().astype(np.uint8))
+                img_path = Path(temp_calib_path) / f"calib_{item_count}.png"
+                img.save(img_path)
+
+                if item_count + 1 >= MAX_CALIB_SAMPLES:
+                    break
+
+        use_random_calib = False
+        if os.listdir(temp_calib_path) == []:
+            LOGGER.warning(f"{prefix} No calibration data found, proceeding with random input calibration.")
+            LOGGER.warning(f"{prefix} This may lead to drop in accuracy after quantization.")
+            temp_calib_path = None
+            use_random_calib = True
+        else:
+            LOGGER.info(f"{prefix} Using {len(os.listdir(temp_calib_path))} samples for calibration.")
+
+        device = "gpu" if torch.cuda.is_available() else "cpu"
+
+        onnx2mxq(
+            onnx_file=f_onnx,
+            save_path=save_path,
+            calib_path=temp_calib_path,
+            use_random_calib=use_random_calib,
+            device=device,
+            prefix=prefix,
+        )
+
+        return save_path
 
     def _add_tflite_metadata(self, file):
         """Add metadata to *.tflite models per https://ai.google.dev/edge/litert/models/metadata."""

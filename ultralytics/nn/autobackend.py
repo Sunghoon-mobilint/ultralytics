@@ -28,6 +28,7 @@ from .backends import (
     TensorRTBackend,
     TorchScriptBackend,
     TritonBackend,
+    MobilintBackend,
 )
 
 
@@ -110,6 +111,7 @@ class AutoBackend(nn.Module):
             | Triton Inference      | triton://model    |
             | ExecuTorch            | *.pte             |
             | Axelera AI            | *_axelera_model/  |
+            | Mobilint              | *.mxq             |
 
     Attributes:
         backend (BaseBackend): The loaded inference backend instance.
@@ -153,6 +155,7 @@ class AutoBackend(nn.Module):
         "triton": TritonBackend,
         "executorch": ExecuTorchBackend,
         "axelera": AxeleraBackend,
+        "mxq": MobilintBackend,
     }
 
     @torch.no_grad()
@@ -189,7 +192,7 @@ class AutoBackend(nn.Module):
             isinstance(device, torch.device)
             and torch.cuda.is_available()
             and device.type != "cpu"
-            and format not in {"pt", "torchscript", "engine", "onnx", "paddle"}
+            and format not in {"pt", "torchscript", "engine", "onnx", "paddle", "mxq"}
         ):
             device = torch.device("cpu")
 
@@ -213,7 +216,7 @@ class AutoBackend(nn.Module):
             backend_kwargs["format"] = format
         self.backend = self._BACKEND_MAP[format](model, **backend_kwargs)
 
-        self.nhwc = format in {"coreml", "saved_model", "pb", "tflite", "edgetpu", "rknn"}
+        self.nhwc = format in {"coreml", "saved_model", "pb", "tflite", "edgetpu", "rknn", "mxq"}
         self.format = format
 
         # Ensure backend has names (fallback to default if not set by metadata)
@@ -333,6 +336,7 @@ class AutoBackend(nn.Module):
         types = [s in name for s in sf]
         types[5] |= name.endswith(".mlmodel")
         types[8] &= not types[9]
+        types[-1] |= name.endswith(".mxq")  # Mobilint accepts both *_mxq_model/ dirs and *.mxq files
         format = next((f for i, f in enumerate(export_formats()["Argument"]) if types[i]), None)
         if format == "-":
             format = "pt"
