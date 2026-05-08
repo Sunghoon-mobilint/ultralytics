@@ -314,17 +314,7 @@ class Exporter:
         if fmt == "imx" and self.args.device is None and torch.cuda.is_available():
             LOGGER.warning("Exporting on CPU while CUDA is available, setting device=0 for faster export on GPU.")
             self.args.device = "0"  # update device to "0"
-        MXQ_DEVICES = ["aries", "regulus"]
-        if fmt == "mxq":
-            if self.args.device is None:
-                LOGGER.warning("MXQ export requires device arg, setting device='aries'.")
-                LOGGER.warning(f"Valid MXQ devices are {MXQ_DEVICES}.")
-                self.args.device = "aries"
-            elif self.args.device not in MXQ_DEVICES:
-                raise ValueError(f"Invalid device '{self.args.device}' for MXQ export. Valid devices are {MXQ_DEVICES}.")
-        is_mxq_dev = fmt == "mxq" and self.args.device in MXQ_DEVICES
-        is_dev_none = self.args.device is None
-        self.device = select_device("cpu" if is_mxq_dev or is_dev_none else self.args.device)
+        self.device = select_device("cpu" if self.args.device is None else self.args.device)
 
         # Argument compatibility checks
         fmt_keys = dict(zip(fmts_dict["Argument"], fmts_dict["Arguments"]))[fmt]
@@ -1121,9 +1111,21 @@ class Exporter:
 
         device = "gpu" if torch.cuda.is_available() else "cpu"
 
+        target = getattr(self.args, "target", None)
+        core_mode = getattr(self.args, "core_mode", None)
+        if not target:
+            raise ValueError("MXQ export requires 'target=' arg (e.g. 'aries' | 'aries2' | 'regulus').")
+        if not core_mode:
+            raise ValueError(
+                "MXQ export requires 'core_mode=' arg "
+                "(one of 'single' | 'multi' | 'global4' | 'global8' | 'all')."
+            )
+
         onnx2mxq(
             onnx_file=f_onnx,
             save_path=save_path,
+            target=target,
+            core_mode=core_mode,
             calib_path=temp_calib_path,
             use_random_calib=use_random_calib,
             device=device,

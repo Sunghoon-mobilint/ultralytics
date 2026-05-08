@@ -285,13 +285,46 @@ class Model(torch.nn.Module):
             self.overrides = self.model.args = self._reset_ckpt_args(self.model.args)
             self.ckpt_path = self.model.pt_path
         else:
-            weights = checks.check_file(weights)  # runs in all cases, not redundant with above call
+            # `.mxq` resolution is handled by the CLI entrypoint (HF auto-download) or by the
+            # MobilintBackend at load time; skip `check_file` so a missing `.mxq` reaches the
+            # backend, where a yolo*.mxq is fetched on demand.
+            if not str(weights).endswith(".mxq"):
+                weights = checks.check_file(weights)
             self.model, self.ckpt = weights, None
             self.task = task or guess_model_task(weights)
             self.ckpt_path = weights
         self.overrides["model"] = weights
         self.overrides["task"] = self.task
         self.model_name = weights
+
+    def _resolve_mxq(self, args: dict, mode: str) -> None:
+        """Resolve a missing yolo*.mxq path via Hugging Face auto-download.
+
+        If `self.model` points to an existing `.mxq` file, this is a no-op. When the file is
+        missing, both `target` and `core_mode` from `args` are required to compose the HF URL
+        `mobilint/YOLO<rest>/<target>/<core_mode>/<name>.mxq`.
+
+        Args:
+            args (dict): Merged predict/val/etc. args containing `target` and `core_mode`.
+            mode (str): The calling mode ('predict' | 'val' | ...) — used in the error message.
+        """
+        if not (isinstance(self.model, str) and self.model.endswith(".mxq")):
+            return
+        if Path(self.model).exists():
+            return
+        from ultralytics.utils.export.mxq import attempt_download_mxq
+
+        target = args.get("target")
+        core_mode = args.get("core_mode")
+        if not target or not core_mode:
+            raise ValueError(
+                f"Running '{mode}' on a missing '.mxq' requires both 'target=' "
+                f"(e.g. 'aries' | 'aries2' | 'regulus') and 'core_mode=' "
+                f"(one of 'single' | 'multi' | 'global4' | 'global8'). "
+                f"Got target={target!r}, core_mode={core_mode!r}."
+            )
+        resolved = attempt_download_mxq(self.model, device=target, core_mode=core_mode)
+        self.model = self.model_name = resolved
 
     def _check_is_pytorch_model(self) -> None:
         """Check if the model is a PyTorch model and raise TypeError if it's not.
@@ -525,6 +558,8 @@ class Model(torch.nn.Module):
         args = {**self.overrides, **custom, **kwargs}  # highest priority args on the right
         prompts = args.pop("prompts", None)  # for SAM-type models
 
+        self._resolve_mxq(args, "predict")
+
         if not self.predictor or self.predictor.args.device != args.get("device", self.predictor.args.device):
             self.predictor = (predictor or self._smart_load("predictor"))(overrides=args, _callbacks=self.callbacks)
             self.predictor.setup_model(model=self.model, verbose=is_cli)
@@ -610,6 +645,8 @@ class Model(torch.nn.Module):
         """
         custom = {"rect": True}  # method defaults
         args = {**self.overrides, **custom, **kwargs, "mode": "val"}  # highest priority args on the right
+
+        self._resolve_mxq(args, "val")
 
         validator = (validator or self._smart_load("validator"))(args=args, _callbacks=self.callbacks)
         validator(model=self.model)

@@ -8,8 +8,7 @@ import torch
 
 from ultralytics.utils import LOGGER
 from ultralytics.utils.checks import check_requirements
-from ultralytics.utils.mxq import (
-    attempt_download_mxq,
+from ultralytics.utils.export.mxq import (
     format_mobilint_postprocess_output,
     get_mobilint_model_zoo_post_cfg,
 )
@@ -42,11 +41,15 @@ class MobilintBackend(BaseBackend):
         from mblt_model_zoo.vision.utils.postprocess import build_postprocess
         from qbruntime import Accelerator, Model, ModelConfig
 
-        # Resolve from local cache or download from Hugging Face if a registered .mxq is missing.
-        w = Path(attempt_download_mxq(weight))
+        w = Path(weight)
         mxq_file = next(w.rglob("*.mxq"), None) if w.is_dir() else (w if w.suffix == ".mxq" else None)
         if mxq_file is None or not mxq_file.exists():
-            raise FileNotFoundError(f"No .mxq file found at: {w}")
+            raise FileNotFoundError(
+                f"No .mxq file found at: {w}. For yolo*.mxq, pass `core_mode=` (and optional "
+                "`target=`) to `model.predict(...)` to trigger Hugging Face auto-download, or "
+                "manually call `attempt_download_mxq(name, device=..., core_mode=...)` and pass "
+                "the local path."
+            )
 
         accelerator = Accelerator()
         model_config = ModelConfig()
@@ -57,12 +60,6 @@ class MobilintBackend(BaseBackend):
         # Resolve postprocess config from mblt-model-zoo by model name; fall back to YOLO detection defaults
         model_name = mxq_file.stem
         post_cfg = get_mobilint_model_zoo_post_cfg(model_name)
-        if not post_cfg:
-            LOGGER.warning(
-                f"mblt-model-zoo postprocess config not found for 'model={model_name}'. "
-                "Using YOLO anchorless detection defaults."
-            )
-            post_cfg = {"task": "object_detection", "nc": 80, "nl": 3}
 
         self._post_task = post_cfg.get("task")
         task = _TASK_MAP.get(self._post_task)
@@ -83,16 +80,16 @@ class MobilintBackend(BaseBackend):
             self.apply_metadata(YAML.load(metadata_file))
 
     def forward(self, im: torch.Tensor) -> torch.Tensor | list[torch.Tensor]:
-        """Run inference on the Mobilint accelerator and adapt the output to Ultralytics' format.
+        """Run inference on the Mobilint hardware accelerator.
 
         Args:
-            im (torch.Tensor): Input image tensor. AutoBackend permutes BCHW→BHWC for this backend
-                (`nhwc=True`), so the tensor is BHWC at this point.
+            im (torch.Tensor): Input image tensor in BHWC format, normalized to [0, 1].
 
         Returns:
-            (torch.Tensor | list[torch.Tensor]): Postprocessed output in the layout expected by the
-            Ultralytics predictor for `self.task`.
+            (list): Model predictions as a list of output arrays.
         """
-        output = self.model.infer(im.cpu().numpy())
+        im = im.cpu().numpy() * 255
+        im = im.astype("uint8")
+        output = self.model.infer(im)
         output = self._mobilint_pp(output, 0.25, 0.45)
         return format_mobilint_postprocess_output(output, self.task)
