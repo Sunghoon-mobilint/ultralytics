@@ -1114,7 +1114,7 @@ class Exporter:
         target = getattr(self.args, "target", None)
         core_mode = getattr(self.args, "core_mode", None)
         if not target:
-            raise ValueError("MXQ export requires 'target=' arg (e.g. 'aries' | 'aries2' | 'regulus').")
+            raise ValueError("MXQ export requires 'target=' arg (e.g. 'aries' | 'regulus').")
         if not core_mode:
             raise ValueError(
                 "MXQ export requires 'core_mode=' arg "

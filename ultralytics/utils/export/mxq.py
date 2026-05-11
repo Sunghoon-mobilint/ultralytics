@@ -34,7 +34,7 @@ def onnx2mxq(
     Args:
         onnx_file (str | Path): Path to the ONNX model to compile.
         save_path (str | Path): Output path for the compiled .mxq file.
-        target (str): Mobilint hardware tier (e.g. `"aries"` | `"aries2"` | `"regulus"`).
+        target (str): Mobilint hardware tier (e.g. `"aries"` | `"regulus"`).
             for future use; It depends on pip package versions of qbcompiler.
         core_mode (str): Compile inference scheme — one of `"single" | "multi" | "global4" |
             "global8" | "all"`. Forwarded to qbcompiler as `inference_scheme`.
@@ -62,7 +62,6 @@ def onnx2mxq(
         auto_convert_format=True,
         pipeline=[
             {"op": "letterbox", "height": height, "width": width, "padValue": 114},
-            # {"op": "normalize", "mean": [0, 0, 0], "std": [255, 255, 255]},
         ],
         input_configs={},
     )

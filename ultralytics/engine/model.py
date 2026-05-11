@@ -319,7 +319,7 @@ class Model(torch.nn.Module):
         if not target or not core_mode:
             raise ValueError(
                 f"Running '{mode}' on a missing '.mxq' requires both 'target=' "
-                f"(e.g. 'aries' | 'aries2' | 'regulus') and 'core_mode=' "
+                f"(e.g. 'aries' | 'regulus') and 'core_mode=' "
                 f"(one of 'single' | 'multi' | 'global4' | 'global8'). "
                 f"Got target={target!r}, core_mode={core_mode!r}."
             )

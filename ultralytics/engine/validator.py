@@ -179,6 +179,9 @@ class BaseValidator:
                 dnn=self.args.dnn,
                 data=self.args.data,
                 fp16=self.args.half,
+                core_mode=getattr(self.args, "core_mode", None),
+                cluster_id=getattr(self.args, "cluster_id", None),
+                core_id=getattr(self.args, "core_id", None),
             )
             self.device = model.device  # update device
             self.args.half = model.fp16  # update half

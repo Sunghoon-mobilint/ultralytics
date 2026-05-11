@@ -168,6 +168,9 @@ class AutoBackend(nn.Module):
         fp16: bool = False,
         fuse: bool = True,
         verbose: bool = True,
+        core_mode: str | None = None,
+        cluster_id: int | list[int] | None = None,
+        core_id: int | list[int] | None = None,
     ):
         """Initialize the AutoBackend for inference.
 
@@ -179,6 +182,9 @@ class AutoBackend(nn.Module):
             fp16 (bool): Enable half-precision inference. Supported only on specific backends.
             fuse (bool): Fuse Conv2D + BatchNorm layers for optimization.
             verbose (bool): Enable verbose logging.
+            core_mode (str, optional): Mobilint MXQ inference scheme — 'single' | 'multi' | 'global4' | 'global8'.
+            cluster_id (int | list[int], optional): Mobilint cluster ID(s) for MXQ predict.
+            core_id (int | list[int], optional): Mobilint core ID(s) for MXQ predict (used with core_mode='single').
         """
         super().__init__()
         # Determine model format from path/URL
@@ -214,6 +220,10 @@ class AutoBackend(nn.Module):
             backend_kwargs["verbose"] = verbose
         elif format in {"saved_model", "pb", "tflite", "edgetpu", "dnn"}:
             backend_kwargs["format"] = format
+        elif format == "mxq":
+            backend_kwargs["core_mode"] = core_mode
+            backend_kwargs["cluster_id"] = cluster_id
+            backend_kwargs["core_id"] = core_id
         self.backend = self._BACKEND_MAP[format](model, **backend_kwargs)
 
         self.nhwc = format in {"coreml", "saved_model", "pb", "tflite", "edgetpu", "rknn", "mxq"}
@@ -336,7 +346,6 @@ class AutoBackend(nn.Module):
         types = [s in name for s in sf]
         types[5] |= name.endswith(".mlmodel")
         types[8] &= not types[9]
-        types[-1] |= name.endswith(".mxq")  # Mobilint accepts both *_mxq_model/ dirs and *.mxq files
         format = next((f for i, f in enumerate(export_formats()["Argument"]) if types[i]), None)
         if format == "-":
             format = "pt"

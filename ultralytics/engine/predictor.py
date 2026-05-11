@@ -405,6 +405,9 @@ class BasePredictor:
             fp16=self.args.half,
             fuse=True,
             verbose=verbose,
+            core_mode=getattr(self.args, "core_mode", None),
+            cluster_id=getattr(self.args, "cluster_id", None),
+            core_id=getattr(self.args, "core_id", None),
         )
 
         self.device = self.model.device  # update device
