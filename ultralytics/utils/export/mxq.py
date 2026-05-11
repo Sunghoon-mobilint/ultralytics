@@ -263,7 +263,15 @@ def pad_mobilint_detections(detections: list[torch.Tensor]) -> torch.Tensor:
 
 
 def format_mobilint_segmentation(segments: list[list[torch.Tensor]]) -> list[torch.Tensor]:
-    """Adapt mblt-model-zoo segmentation output to Ultralytics' existing segment predictor input format."""
+    """Adapt mblt-model-zoo segmentation output to Ultralytics' existing segment predictor input format.
+
+    mblt-model-zoo emits per-detection masks at the input resolution (e.g. 640x640). Standard
+    Ultralytics YOLO segment expects protos at imgsz/4 (stride-4), and `SegmentationValidator`
+    relies on this convention via `imgsz = [4 * x for x in proto.shape[2:]]`. Downsample the
+    masks accordingly so the unmodified val/predict postprocess chain handles them correctly.
+    """
+    import torch.nn.functional as F
+
     if not segments:
         return [torch.zeros((0, 0, 7)), torch.zeros((0, 1, 1, 1))]
 
@@ -271,7 +279,10 @@ def format_mobilint_segmentation(segments: list[list[torch.Tensor]]) -> list[tor
     max_masks = max(max_masks, 1)
     device = segments[0][0].device
     dtype = segments[0][0].dtype
-    mask_shape = next((item[1].shape[-2:] for item in segments if item[1].numel()), (1, 1))
+
+    raw_h, raw_w = next((item[1].shape[-2:] for item in segments if item[1].numel()), (4, 4))
+    proto_h, proto_w = max(raw_h // 4, 1), max(raw_w // 4, 1)
+    mask_shape = (proto_h, proto_w)
 
     preds = torch.zeros((len(segments), max_masks, 6 + max_masks), dtype=dtype, device=device)
     protos = torch.zeros((len(segments), max_masks, *mask_shape), dtype=dtype, device=device)
@@ -282,7 +293,10 @@ def format_mobilint_segmentation(segments: list[list[torch.Tensor]]) -> list[tor
             continue
         preds[batch_idx, :num_masks, :6] = det[:, :6]
         preds[batch_idx, torch.arange(num_masks, device=device), 6 + torch.arange(num_masks, device=device)] = 1
-        protos[batch_idx, :num_masks] = masks[:num_masks].to(device=device, dtype=dtype)
+        m = masks[:num_masks].to(device=device)
+        if m.shape[-2:] != mask_shape:
+            m = F.interpolate(m.unsqueeze(0).float(), mask_shape, mode="bilinear", align_corners=False).squeeze(0)
+        protos[batch_idx, :num_masks] = m.to(dtype=dtype)
 
     return [preds, protos]
 

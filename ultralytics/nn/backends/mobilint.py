@@ -244,5 +244,7 @@ class MobilintBackend(BaseBackend):
         im = im.cpu().numpy() * 255
         im = im.astype("uint8")
         output = self.model.infer(im)
+        # TODO: Remove iou/conf thresholds from the backend for validation.
+        # Implement end2end=false postprocess function in mblt-model-zoo.
         output = self._mobilint_pp(output, 0.25, 0.45)
         return format_mobilint_postprocess_output(output, self.task)

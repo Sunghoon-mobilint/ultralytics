@@ -168,9 +168,7 @@ class AutoBackend(nn.Module):
         fp16: bool = False,
         fuse: bool = True,
         verbose: bool = True,
-        core_mode: str | None = None,
-        cluster_id: int | list[int] | None = None,
-        core_id: int | list[int] | None = None,
+        **kwargs: Any,
     ):
         """Initialize the AutoBackend for inference.
 
@@ -182,9 +180,10 @@ class AutoBackend(nn.Module):
             fp16 (bool): Enable half-precision inference. Supported only on specific backends.
             fuse (bool): Fuse Conv2D + BatchNorm layers for optimization.
             verbose (bool): Enable verbose logging.
-            core_mode (str, optional): Mobilint MXQ inference scheme — 'single' | 'multi' | 'global4' | 'global8'.
-            cluster_id (int | list[int], optional): Mobilint cluster ID(s) for MXQ predict.
-            core_id (int | list[int], optional): Mobilint core ID(s) for MXQ predict (used with core_mode='single').
+            **kwargs (Any): Vendor-specific backend options. Forwarded to the underlying backend
+                only when its format matches (e.g. `core_mode` / `cluster_id` / `core_id` for
+                Mobilint MXQ). Unrecognized kwargs are silently ignored for other formats so
+                callers can pass them unconditionally without knowing the model's format.
         """
         super().__init__()
         # Determine model format from path/URL
@@ -221,9 +220,7 @@ class AutoBackend(nn.Module):
         elif format in {"saved_model", "pb", "tflite", "edgetpu", "dnn"}:
             backend_kwargs["format"] = format
         elif format == "mxq":
-            backend_kwargs["core_mode"] = core_mode
-            backend_kwargs["cluster_id"] = cluster_id
-            backend_kwargs["core_id"] = core_id
+            backend_kwargs.update(kwargs)
         self.backend = self._BACKEND_MAP[format](model, **backend_kwargs)
 
         self.nhwc = format in {"coreml", "saved_model", "pb", "tflite", "edgetpu", "rknn", "mxq"}
