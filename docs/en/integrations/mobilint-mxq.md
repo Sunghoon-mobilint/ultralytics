@@ -65,16 +65,12 @@ ARIES is built from **2 physical clusters of 4 cores each (8 cores total)**. The
 | `single`  | 1 of 8 cores   | Single-stream throughput on one core       |
 | `multi`   | 4 cores        | Batch processing of 4 images at once       |
 | `global4` | 1 cluster (4)  | Lowest latency for a single image          |
-| `global8` | 2 clusters (8) | Lowest latency for a single image (all HW) |
+| `global8` | 2 clusters (8) | Lowest latency for a single image          |
 
 - **`single`** — Each image is processed by **one of the 8 cores**. Multiple cores can run independent streams in parallel, so this mode scales out across many concurrent inputs. Async I/O and async post-processing have a large impact on overall throughput.
 - **`multi`** — A **batch of 4 images** is processed together, optimized for offline batch inference and high-throughput pipelines.
 - **`global4`** — A **single cluster (4 cores)** cooperates on **one image** to minimize per-image latency. Useful when latency matters more than aggregate throughput.
 - **`global8`** — **Both clusters (all 8 cores)** cooperate on **one image** for the lowest possible per-image latency, at the cost of leaving no cores free for concurrent streams.
-
-!!! tip "`all` — export-only versatile compile"
-
-    Passing `core_mode="all"` to **export** compiles a single `.mxq` that can be loaded under **any** of the four runtime modes (`single`, `multi`, `global4`, `global8`). It is not itself a runtime mode — at inference time you still pick one of the four. Use `all` when you want one artifact that can serve different deployment scenarios; use a specific mode at export when you know exactly how the model will be served and want the smallest, most-tightly-scheduled binary.
 
 For more detail, see Mobilint's [Multi-Core Inference documentation](https://docs.mobilint.com/v1.2/en/multicore.html).
 
@@ -111,21 +107,21 @@ Export your trained YOLO model with the standard Ultralytics `export` API. `targ
         from ultralytics import YOLO
 
         # Load a YOLO model
-        model = YOLO("yolo11s.pt")
+        model = YOLO("yolo26s.pt")
 
         # Export to MXQ format
         model.export(
             format="mxq",
             target="aries",        # 'aries' | 'regulus'
             core_mode="single",    # 'single' | 'multi' | 'global4' | 'global8' | 'all'
-            data="coco8.yaml",     # calibration dataset (recommended)
-        )  # creates 'yolo11s.mxq'
+            data="coco128.yaml",   # calibration dataset (recommended)
+        )  # creates 'yolo26s.mxq'
         ```
 
     === "CLI"
 
         ```bash
-        yolo export model=yolo11s.pt format=mxq target=aries core_mode=single data=coco8.yaml
+        yolo export model=yolo26s.pt format=mxq target=aries core_mode=single data=coco128.yaml
         ```
 
 ### Export Arguments
@@ -149,12 +145,13 @@ Export your trained YOLO model with the standard Ultralytics `export` API. `targ
 The compiled model is written next to the source weights:
 
 ```
-yolo11s.mxq     # Compiled MXQ model
+yolo26s.mxq     # Compiled MXQ model
 ```
 
 ## Running Inference
 
-Load the `.mxq` file with the Ultralytics API just like any other model.
+Load the `.mxq` file with the Ultralytics API just like any other model.  
+Also, you can use pre-compiled mxq file from https://huggingface.co/mobilint/YOLO12m.  
 
 !!! example "Inference with an MXQ Model"
 
@@ -164,7 +161,7 @@ Load the `.mxq` file with the Ultralytics API just like any other model.
         from ultralytics import YOLO
 
         # Load the exported MXQ model
-        model = YOLO("yolo11s.mxq",
+        model = YOLO("yolo12s.mxq",
                      task="detect",
                      target="aries",
                      core_mode="single",
@@ -183,36 +180,7 @@ Load the `.mxq` file with the Ultralytics API just like any other model.
     === "CLI"
 
         ```bash
-        yolo predict model=yolo11s.mxq task=detect \
-            target=aries core_mode=single cluster_id=0 core_id=0 \
-            source='https://ultralytics.com/images/bus.jpg'
-        ```
-
-### Pre-Compiled Models from Hugging Face
-
-If you do not have a local `.mxq` file, Ultralytics will auto-download a pre-compiled model from the [`mobilint`](https://huggingface.co/mobilint) Hugging Face organization. Provide `target` and `core_mode` to select the variant, plus `cluster_id` / `core_id` to pick the NPU core(s) it will run on:
-
-!!! example "Auto-Download Pre-Compiled MXQ"
-
-    === "Python"
-
-        ```python
-        from ultralytics import YOLO
-
-        # Downloads mobilint/YOLO12m/aries/single/yolo12m.mxq
-        model = YOLO("yolo12m.mxq",
-                     task="detect",
-                     target="aries",
-                     core_mode="single",
-                     cluster_id=0,
-                     core_id=0)
-        results = model("https://ultralytics.com/images/bus.jpg")
-        ```
-
-    === "CLI"
-
-        ```bash
-        yolo predict model=yolo12m.mxq task=detect \
+        yolo predict model=yolo12s.mxq task=detect \
             target=aries core_mode=single cluster_id=0 core_id=0 \
             source='https://ultralytics.com/images/bus.jpg'
         ```
@@ -243,22 +211,22 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
 
         # single: run on Cluster0 / Core0
         mxq_cfg = dict(target="aries", core_mode="single", cluster_id=0, core_id=0)
-        model = YOLO("yolo11s.mxq", task="detect", **mxq_cfg)
+        model = YOLO("yolo26s.mxq", task="detect", **mxq_cfg)
         model.predict("https://ultralytics.com/images/bus.jpg")
 
         # multi: 4-image batch on Cluster0
         mxq_cfg = dict(target="aries", core_mode="multi", cluster_id=0)
-        model = YOLO("yolo11s.mxq", task="detect", **mxq_cfg)
+        model = YOLO("yolo26s.mxq", task="detect", **mxq_cfg)
         model.predict("https://ultralytics.com/images/bus.jpg")
 
         # global4: 1 cluster (4 cores) cooperates on each image
         mxq_cfg = dict(target="aries", core_mode="global4", cluster_id=0)
-        model = YOLO("yolo11s.mxq", task="detect", **mxq_cfg)
+        model = YOLO("yolo26s.mxq", task="detect", **mxq_cfg)
         model.predict("https://ultralytics.com/images/bus.jpg")
 
         # global8: all 8 cores cooperate on each image — no IDs needed
         mxq_cfg = dict(target="aries", core_mode="global8")
-        model = YOLO("yolo11s.mxq", task="detect", **mxq_cfg)
+        model = YOLO("yolo26s.mxq", task="detect", **mxq_cfg)
         model.predict("https://ultralytics.com/images/bus.jpg")
         ```
 
@@ -266,19 +234,19 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
 
         ```bash
         # single: Cluster0 / Core0
-        yolo predict model=yolo11s.mxq task=detect \
+        yolo predict model=yolo26s.mxq task=detect \
             target=aries core_mode=single cluster_id=0 core_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # multi: Cluster0
-        yolo predict model=yolo11s.mxq task=detect \
+        yolo predict model=yolo26s.mxq task=detect \
             target=aries core_mode=multi cluster_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # global4: Cluster0
-        yolo predict model=yolo11s.mxq task=detect \
+        yolo predict model=yolo26s.mxq task=detect \
             target=aries core_mode=global4 cluster_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # global8: no cluster/core args
-        yolo predict model=yolo11s.mxq task=detect \
+        yolo predict model=yolo26s.mxq task=detect \
             target=aries core_mode=global8 source=https://ultralytics.com/images/bus.jpg
         ```
 
@@ -295,7 +263,7 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         from ultralytics import YOLO
 
         # Register 5 cores at load time
-        model = YOLO("yolo11s.mxq",
+        model = YOLO("yolo26s.mxq",
                      task="detect",
                      target="aries",
                      core_mode="single",
@@ -319,20 +287,10 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         # The yolo CLI runs a single inference loop, so multi-core registration mainly
         # helps when you drive predict() from your own threaded code (Python). The list
         # form is still valid on the CLI:
-        yolo predict model=yolo11s.mxq task=detect \
+        yolo predict model=yolo26s.mxq task=detect \
             target=aries core_mode=single cluster_id=[0,0,0,1,1] core_id=[0,1,3,2,3] \
             source=/path/to/frames/
         ```
-
-!!! warning "Required at inference time"
-
-    `core_mode` is **always required** for MXQ inference, and `cluster_id` / `core_id` are required whenever the mode uses them (see the table above):
-
-    - `single` — both `cluster_id` and `core_id` required.
-    - `multi`, `global4` — `cluster_id` required.
-    - `global8` — neither is needed.
-
-    The backend will raise a `ValueError` if a required argument is missing — there is no silent fallback to a default core. Be explicit so multiple models running on the same device do not collide.
 
 ## Supported Tasks
 
@@ -426,11 +384,11 @@ Use the standard `export` API with `format="mxq"`, plus the required `target` an
 ```python
 from ultralytics import YOLO
 
-model = YOLO("yolo11s.pt")
+model = YOLO("yolo26s.pt")
 model.export(format="mxq", target="aries", core_mode="single", data="coco8.yaml")
 ```
 
-This produces a single `yolo11s.mxq` file ready for deployment.
+This produces a single `yolo26s.mxq` file ready for deployment.
 
 ### Which Mobilint hardware targets are supported?
 
@@ -459,4 +417,4 @@ Fewer than 100 images is typically enough for stable quantization, and the Ultra
 
 ### Where can I find pre-compiled MXQ models?
 
-The [`mobilint` Hugging Face organization](https://huggingface.co/mobilint) hosts pre-compiled YOLO models. Ultralytics will auto-download them when you load a known model name (e.g. `YOLO("yolo12m.mxq", target="aries", core_mode="single")`). The full catalog is in the [Mobilint Model Zoo](https://github.com/mobilint/mblt-model-zoo).
+The [`mobilint` Hugging Face organization](https://huggingface.co/mobilint) hosts pre-compiled YOLO models.
