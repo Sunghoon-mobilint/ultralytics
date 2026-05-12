@@ -70,13 +70,6 @@ def onnx2mxq(
         calib_per_ch = 0
         pipeline.append({"op": "resize", "size": int(maxsize * (256 / 224)), "mode": "bilinear"})
         pipeline.append({"op": "centerCrop", "height": height, "width": width})
-        pipeline.append({
-            "op": "normalize",
-            "mean": [0.485, 0.456, 0.406],
-            "std": [0.229, 0.224, 0.225],
-            "scaleToUint8": True,  # [0, 255] -> [0, 1]
-            "fuseIntoFirstLayer": True,
-        })
     else:
         pipeline.append({"op": "letterbox", "height": height, "width": width, "padValue": 114})
 
