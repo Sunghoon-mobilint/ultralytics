@@ -78,15 +78,6 @@ ARIES is built from **2 physical clusters of 4 cores each (8 cores total)**. The
 
 For more detail, see Mobilint's [Multi-Core Inference documentation](https://docs.mobilint.com/v1.2/en/multicore.html).
 
-## Supported Tasks
-
-| Task                                                              | Status |
-| :---------------------------------------------------------------- | :----- |
-| [Object Detection](https://docs.ultralytics.com/tasks/detect/)    | ✅     |
-| [Segmentation](https://docs.ultralytics.com/tasks/segment/)       | ✅     |
-| [Pose Estimation](https://docs.ultralytics.com/tasks/pose/)       | ✅     |
-| [Classification](https://docs.ultralytics.com/tasks/classify/)    | ✅     |
-
 ## Installation
 
 !!! warning "Platform Requirements"
@@ -155,14 +146,11 @@ Export your trained YOLO model with the standard Ultralytics `export` API. `targ
 
 ### Output
 
-The compiled model is written next to the source weights, alongside a small sidecar carrying class names, task type, image size, and other export metadata:
+The compiled model is written next to the source weights:
 
 ```
 yolo11s.mxq     # Compiled MXQ model
-yolo11s.yaml    # Sidecar metadata (class names, task, imgsz, etc.) — auto-loaded at inference
 ```
-
-Keep the `.yaml` next to the `.mxq` when distributing the model so the Ultralytics MXQ backend can restore class names and other metadata. If the sidecar is missing, inference still runs but visualizations fall back to numeric class labels (`class0`, `class1`, ...).
 
 ## Running Inference
 
@@ -256,22 +244,22 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         # single: run on Cluster0 / Core0
         mxq_cfg = dict(target="aries", core_mode="single", cluster_id=0, core_id=0)
         model = YOLO("yolo11s.mxq", task="detect", **mxq_cfg)
-        model.predict("bus.jpg")
+        model.predict("https://ultralytics.com/images/bus.jpg")
 
         # multi: 4-image batch on Cluster0
         mxq_cfg = dict(target="aries", core_mode="multi", cluster_id=0)
         model = YOLO("yolo11s.mxq", task="detect", **mxq_cfg)
-        model.predict("bus.jpg")
+        model.predict("https://ultralytics.com/images/bus.jpg")
 
         # global4: 1 cluster (4 cores) cooperates on each image
         mxq_cfg = dict(target="aries", core_mode="global4", cluster_id=0)
         model = YOLO("yolo11s.mxq", task="detect", **mxq_cfg)
-        model.predict("bus.jpg")
+        model.predict("https://ultralytics.com/images/bus.jpg")
 
         # global8: all 8 cores cooperate on each image — no IDs needed
         mxq_cfg = dict(target="aries", core_mode="global8")
         model = YOLO("yolo11s.mxq", task="detect", **mxq_cfg)
-        model.predict("bus.jpg")
+        model.predict("https://ultralytics.com/images/bus.jpg")
         ```
 
     === "CLI"
@@ -279,19 +267,19 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         ```bash
         # single: Cluster0 / Core0
         yolo predict model=yolo11s.mxq task=detect \
-            target=aries core_mode=single cluster_id=0 core_id=0 source=bus.jpg
+            target=aries core_mode=single cluster_id=0 core_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # multi: Cluster0
         yolo predict model=yolo11s.mxq task=detect \
-            target=aries core_mode=multi cluster_id=0 source=bus.jpg
+            target=aries core_mode=multi cluster_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # global4: Cluster0
         yolo predict model=yolo11s.mxq task=detect \
-            target=aries core_mode=global4 cluster_id=0 source=bus.jpg
+            target=aries core_mode=global4 cluster_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # global8: no cluster/core args
         yolo predict model=yolo11s.mxq task=detect \
-            target=aries core_mode=global8 source=bus.jpg
+            target=aries core_mode=global8 source=https://ultralytics.com/images/bus.jpg
         ```
 
 !!! example "Advanced — registering multiple cores for parallel workloads (`single` only)"
@@ -346,12 +334,49 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
 
     The backend will raise a `ValueError` if a required argument is missing — there is no silent fallback to a default core. Be explicit so multiple models running on the same device do not collide.
 
-### Validation
+## Supported Tasks
 
-Verify quantization accuracy with `yolo val`:
+| Task                                                              | Status |
+| :---------------------------------------------------------------- | :----- |
+| [Object Detection](https://docs.ultralytics.com/tasks/detect/)    | ✅     |
+| [Segmentation](https://docs.ultralytics.com/tasks/segment/)       | ✅     |
+| [Pose Estimation](https://docs.ultralytics.com/tasks/pose/)       | ✅     |
+| [Classification](https://docs.ultralytics.com/tasks/classify/)    | ✅     |
 
-```bash
-yolo val model=yolo12m.mxq task=detect target=aries core_mode=global8 data=coco8.yaml
+### Object Detection Task
+```
+yolo export model=yolo26s.pt format=mxq target=aries core_mode=all data=coco128.yaml
+yolo predict model=yolo26s.mxq task=detect \
+    target=aries core_mode=single cluster_id=0 core_id=0 \
+    source=https://ultralytics.com/images/bus.jpg
+yolo val model=yolo26s.mxq task=detect target=aries core_mode=global8 data=coco128.yaml
+```
+
+### Segmentation Task
+```
+yolo export model=yolo26s-seg.pt format=mxq target=aries core_mode=all data=coco128.yaml
+yolo predict model=yolo26s-seg.mxq task=segment \
+    target=aries core_mode=single cluster_id=0 core_id=0 \
+    source=https://ultralytics.com/images/bus.jpg
+yolo val model=yolo26s-seg.mxq task=segment target=aries core_mode=global8 data=coco128.yaml
+```
+
+### Pose Estimation Task
+```
+yolo export model=yolo26s-pose.pt format=mxq target=aries core_mode=all data=coco128.yaml
+yolo predict model=yolo26s-pose.mxq task=pose \
+    target=aries core_mode=single cluster_id=0 core_id=0 \
+    source=https://ultralytics.com/images/bus.jpg
+yolo val model=yolo26s-pose.mxq task=pose target=aries core_mode=global8 data=coco128.yaml
+```
+
+### Classification Task
+```
+yolo export model=yolo26s-cls.pt format=mxq target=aries core_mode=all data=imagenet100
+yolo predict model=yolo26s-cls.mxq task=classify imgsz=224 \
+    target=aries core_mode=single cluster_id=0 core_id=0 \
+    source=https://ultralytics.com/images/bus.jpg
+yolo val model=yolo26s-cls.mxq task=classify imgsz=224 target=aries core_mode=global8 data=imagenet100
 ```
 
 ## Real-World Applications

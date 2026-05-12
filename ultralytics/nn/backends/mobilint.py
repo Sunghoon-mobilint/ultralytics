@@ -244,6 +244,13 @@ class MobilintBackend(BaseBackend):
         im = im.cpu().numpy() * 255
         im = im.astype("uint8")
         output = self.model.infer(im)
+        if self.task == "classify":
+            # qbruntime returns BHWC arrays; classify's output is (B, 1, 1, nc). The
+            # ClassificationPredictor expects a (B, nc) tensor, so flatten the trailing dims.
+            out = output[0] if isinstance(output, (list, tuple)) else output
+            if not isinstance(out, torch.Tensor):
+                out = torch.from_numpy(out)
+            return out.reshape(out.shape[0], -1)
         # TODO: Remove iou/conf thresholds from the backend for validation.
         # Implement end2end=false postprocess function in mblt-model-zoo.
         output = self._mobilint_pp(output, 0.25, 0.45)

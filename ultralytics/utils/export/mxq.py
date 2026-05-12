@@ -23,6 +23,7 @@ def onnx2mxq(
     save_path: str | Path,
     target: str,
     core_mode: str,
+    task: str | None = None,
     calib_path: str | None = None,
     use_random_calib: bool = False,
     device: str = "cpu",
@@ -38,6 +39,9 @@ def onnx2mxq(
             for future use; It depends on pip package versions of qbcompiler.
         core_mode (str): Compile inference scheme — one of `"single" | "multi" | "global4" |
             "global8" | "all"`. Forwarded to qbcompiler as `inference_scheme`.
+        task (str | None, optional): Ultralytics task of the source model — one of `"detect"`,
+            `"segment"`, `"pose"`, `"classify"`. Available for task-specific compile choices
+            (e.g. preprocessing pipeline, output layout); pass `None` to keep generic defaults.
         calib_path (str | None, optional): Directory containing calibration `.npy` samples. If
             None, calibration data is not used.
         use_random_calib (bool, optional): If True, use random data for calibration. Mutually
@@ -57,17 +61,31 @@ def onnx2mxq(
     save_path = str(save_path)
     height, width = imgsz
 
+    pipeline = []
+    calib_per_ch = 1
+    if task == "classify":
+        calib_per_ch = 0
+        pipeline.append({"op": "resize", "size": 256, "mode": "bilinear"})
+        pipeline.append({"op": "centerCrop", "height": 224, "width": 224})
+        pipeline.append({
+            "op": "normalize",
+            "mean": [0.485, 0.456, 0.406],
+            "std": [0.229, 0.224, 0.225],
+            "scaleToUint8": True,  # [0, 255] -> [0, 1]
+            "fuseIntoFirstLayer": True,
+        })
+    else:
+        pipeline.append({"op": "letterbox", "height": height, "width": width, "padValue": 114})
+
     preprocessing_config = PreprocessingConfig(
         apply=True,
         auto_convert_format=True,
-        pipeline=[
-            {"op": "letterbox", "height": height, "width": width, "padValue": 114},
-        ],
+        pipeline=pipeline,
         input_configs={},
     )
     calibration_config = CalibrationConfig(
         method=1,  # 0 for per tensor, 1 for per channel
-        output=1,  # 0 for layer, 1 for channel
+        output=calib_per_ch,  # 0 for layer, 1 for channel
         mode=1,  # maxpercentile
         max_percentile={
             "percentile": 0.9999,
@@ -82,6 +100,7 @@ def onnx2mxq(
         use_random_calib=use_random_calib,
         save_path=save_path,
         inference_scheme=core_mode,
+        image_channels=3,
         backend="onnx",
         device=device,
         preprocessing_config=preprocessing_config,

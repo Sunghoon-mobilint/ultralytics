@@ -1126,6 +1126,7 @@ class Exporter:
             save_path=save_path,
             target=target,
             core_mode=core_mode,
+            task=self.model.task,
             calib_path=temp_calib_path,
             use_random_calib=use_random_calib,
             device=device,
