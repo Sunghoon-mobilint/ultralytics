@@ -26,8 +26,8 @@ def onnx2mxq(
     task: str | None = None,
     calib_path: str | None = None,
     use_random_calib: bool = False,
+    imgsz: int | tuple[int, int] = (640, 640),
     device: str = "cpu",
-    imgsz: tuple[int, int] = (640, 640),
     prefix: str = "",
 ) -> None:
     """Compile an ONNX model to Mobilint MXQ format using qbcompiler.
@@ -59,14 +59,17 @@ def onnx2mxq(
 
     onnx_file = str(onnx_file)
     save_path = str(save_path)
+    if isinstance(imgsz, int):
+        imgsz = (imgsz, imgsz)
     height, width = imgsz
+    maxsize = max(height, width)
 
     pipeline = []
     calib_per_ch = 1
     if task == "classify":
         calib_per_ch = 0
-        pipeline.append({"op": "resize", "size": 256, "mode": "bilinear"})
-        pipeline.append({"op": "centerCrop", "height": 224, "width": 224})
+        pipeline.append({"op": "resize", "size": int(maxsize * (256 / 224)), "mode": "bilinear"})
+        pipeline.append({"op": "centerCrop", "height": height, "width": width})
         pipeline.append({
             "op": "normalize",
             "mean": [0.485, 0.456, 0.406],

@@ -241,8 +241,9 @@ class MobilintBackend(BaseBackend):
         Returns:
             (list): Model predictions as a list of output arrays.
         """
-        im = im.cpu().numpy() * 255
-        im = im.astype("uint8")
+        if im.dtype != torch.uint8:
+            im = im.cpu().numpy() * 255
+            im = im.astype("uint8")
         output = self.model.infer(im)
         if self.task == "classify":
             # qbruntime returns BHWC arrays; classify's output is (B, 1, 1, nc). The

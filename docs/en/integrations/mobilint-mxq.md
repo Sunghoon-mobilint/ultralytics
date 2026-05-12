@@ -372,7 +372,7 @@ yolo val model=yolo26s-pose.mxq task=pose target=aries core_mode=global8 data=co
 
 ### Classification Task
 ```
-yolo export model=yolo26s-cls.pt format=mxq target=aries core_mode=all data=imagenet100
+yolo export model=yolo26s-cls.pt imgsz=224 format=mxq target=aries core_mode=all data=imagenet100
 yolo predict model=yolo26s-cls.mxq task=classify imgsz=224 \
     target=aries core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg

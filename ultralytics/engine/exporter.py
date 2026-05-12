@@ -250,6 +250,7 @@ class Exporter:
         export_imx: Export model to IMX format.
         export_executorch: Export model to ExecuTorch format.
         export_axelera: Export model to Axelera format.
+        export_mxq: Export model to Mobilint format.
 
     Examples:
         Export a YOLO26 model to ONNX format
@@ -345,6 +346,9 @@ class Exporter:
             if not self.args.data:
                 LOGGER.warning("MXQ export requires data arg, setting data='coco128.yaml'.")
                 self.args.data = "coco128.yaml"
+            if not self.args.int8:
+                LOGGER.warning("Setting int8=True for Mobilint MXQ export.")
+                self.args.int8 = True
         if not hasattr(model, "names"):
             model.names = default_class_names()
         model.names = check_class_names(model.names)
@@ -1077,7 +1081,7 @@ class Exporter:
         import tempfile
         from PIL import Image
         from ultralytics.utils.export import onnx2mxq
-        MAX_CALIB_SAMPLES = 100
+        MAX_CALIB_SAMPLES = 500
 
         save_path = os.path.abspath(Path(self.file).with_suffix(".mxq"))
 
@@ -1088,7 +1092,7 @@ class Exporter:
         f_onnx = self.export_onnx()  # ensure ONNX is available
 
         # Prepare calibration data
-        temp_calib_path = tempfile.mkdtemp()
+        temp_calib_path = tempfile.mkdtemp(prefix=f"ultralytics_{self.model.task}_calib_")
         if self.args.data:
             LOGGER.info(f"{prefix} Preparing calibration data in {temp_calib_path}...")
             images = (img for batch in self.get_int8_calibration_dataloader(prefix) for img in batch["img"])
@@ -1129,6 +1133,7 @@ class Exporter:
             task=self.model.task,
             calib_path=temp_calib_path,
             use_random_calib=use_random_calib,
+            imgsz=self.args.imgsz,
             device=device,
             prefix=prefix,
         )
