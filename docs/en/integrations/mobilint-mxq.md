@@ -115,7 +115,7 @@ Export your trained YOLO model with the standard Ultralytics `export` API. `targ
             target="aries",        # 'aries' | 'regulus'
             core_mode="single",    # 'single' | 'multi' | 'global4' | 'global8' | 'all'
             data="coco128.yaml",   # calibration dataset (recommended)
-        )  # creates 'yolo26s.mxq'
+        )  # creates 'yolo26s_mobilint_model/'
         ```
 
     === "CLI"
@@ -142,16 +142,19 @@ Export your trained YOLO model with the standard Ultralytics `export` API. `targ
 
 ### Output
 
-The compiled model is written next to the source weights:
+The exporter writes a self-contained folder next to the source weights:
 
 ```
-yolo26s.mxq     # Compiled MXQ model
+yolo26s_mobilint_model/
+├── yolo26s_mobilint_model        # Compiled MXQ artifact loaded by qbruntime
+└── metadata.yaml      # names / task / imgsz / head params (reg_max, nl, nm)
 ```
+
+The sidecar `metadata.yaml` is required for inference on custom-trained models — it carries the class names and post-processing parameters that cannot be inferred from the `.mxq` filename alone.
 
 ## Running Inference
 
-Load the `.mxq` file with the Ultralytics API just like any other model.  
-Also, you can use pre-compiled mxq file from https://huggingface.co/mobilint/YOLO12m.  
+Pass the exported folder (or a bare `.mxq` file from Hugging Face) to the Ultralytics API just like any other model. Pre-compiled YOLO MXQs are also published at https://huggingface.co/mobilint.
 
 !!! example "Inference with an MXQ Model"
 
@@ -161,16 +164,17 @@ Also, you can use pre-compiled mxq file from https://huggingface.co/mobilint/YOL
         from ultralytics import YOLO
 
         # Load the exported MXQ model
-        model = YOLO("yolo12s.mxq",
-                     task="detect",
-                     target="aries",
-                     core_mode="single",
-                     cluster_id=0,
-                     core_id=0)
+        model = YOLO("yolo12s.mxq", task="detect")
 
-        # Run inference — explicitly pick the NPU core to run on.
+        # Run inference — pass NPU placement on the predict() call.
         # See "Selecting Cores at Inference Time" below for all options.
-        results = model("https://ultralytics.com/images/bus.jpg")
+        results = model.predict(
+            "https://ultralytics.com/images/bus.jpg",
+            target="aries",
+            core_mode="single",
+            cluster_id=0,
+            core_id=0,
+        )
 
         for r in results:
             print(f"Detected {len(r.boxes)} objects")
@@ -187,7 +191,7 @@ Also, you can use pre-compiled mxq file from https://huggingface.co/mobilint/YOL
 
 ### Selecting Cores at Inference Time
 
-Two additional arguments — `cluster_id` and `core_id` — control which physical cores the loaded model runs on. They are **inference-time only** (the compiled `.mxq` itself is core-agnostic; allocation happens when the model is loaded into `qbruntime`). Pass them on the `YOLO(...)` constructor, alongside `target` and `core_mode`.
+Two additional arguments — `cluster_id` and `core_id` — control which physical cores the loaded model runs on. They are **inference-time only** (the compiled `.mxq` itself is core-agnostic; allocation happens when the model is loaded into `qbruntime`). Pass them to `model.predict(...)` / `model.val(...)`, alongside `target` and `core_mode`.
 
 Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to provide depends on `core_mode`:
 
@@ -209,44 +213,43 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         ```python
         from ultralytics import YOLO
 
+        model = YOLO("yolo26s_mobilint_model", task="detect")
+        src = "https://ultralytics.com/images/bus.jpg"
+
         # single: run on Cluster0 / Core0
-        mxq_cfg = dict(target="aries", core_mode="single", cluster_id=0, core_id=0)
-        model = YOLO("yolo26s.mxq", task="detect", **mxq_cfg)
-        model.predict("https://ultralytics.com/images/bus.jpg")
+        model.predict(src, target="aries", core_mode="single", cluster_id=0, core_id=0)
 
         # multi: 4-image batch on Cluster0
-        mxq_cfg = dict(target="aries", core_mode="multi", cluster_id=0)
-        model = YOLO("yolo26s.mxq", task="detect", **mxq_cfg)
-        model.predict("https://ultralytics.com/images/bus.jpg")
+        model.predict(src, target="aries", core_mode="multi", cluster_id=0)
 
         # global4: 1 cluster (4 cores) cooperates on each image
-        mxq_cfg = dict(target="aries", core_mode="global4", cluster_id=0)
-        model = YOLO("yolo26s.mxq", task="detect", **mxq_cfg)
-        model.predict("https://ultralytics.com/images/bus.jpg")
+        model.predict(src, target="aries", core_mode="global4", cluster_id=0)
 
         # global8: all 8 cores cooperate on each image — no IDs needed
-        mxq_cfg = dict(target="aries", core_mode="global8")
-        model = YOLO("yolo26s.mxq", task="detect", **mxq_cfg)
-        model.predict("https://ultralytics.com/images/bus.jpg")
+        model.predict(src, target="aries", core_mode="global8")
         ```
+
+        !!! tip "Switching modes on the same `YOLO` instance"
+
+            The qbruntime backend is initialized on the **first** `predict()`/`val()` call and reused thereafter, so the four blocks above effectively select the mode chosen on the first call. To switch `core_mode` / `cluster_id` / `core_id` at runtime, instantiate a new `YOLO("yolo26s_mobilint_model", task="detect")` per configuration.
 
     === "CLI"
 
         ```bash
         # single: Cluster0 / Core0
-        yolo predict model=yolo26s.mxq task=detect \
+        yolo predict model=yolo26s_mobilint_model task=detect \
             target=aries core_mode=single cluster_id=0 core_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # multi: Cluster0
-        yolo predict model=yolo26s.mxq task=detect \
+        yolo predict model=yolo26s_mobilint_model task=detect \
             target=aries core_mode=multi cluster_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # global4: Cluster0
-        yolo predict model=yolo26s.mxq task=detect \
+        yolo predict model=yolo26s_mobilint_model task=detect \
             target=aries core_mode=global4 cluster_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # global8: no cluster/core args
-        yolo predict model=yolo26s.mxq task=detect \
+        yolo predict model=yolo26s_mobilint_model task=detect \
             target=aries core_mode=global8 source=https://ultralytics.com/images/bus.jpg
         ```
 
@@ -262,18 +265,21 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         from concurrent.futures import ThreadPoolExecutor
         from ultralytics import YOLO
 
-        # Register 5 cores at load time
-        model = YOLO("yolo26s.mxq",
-                     task="detect",
-                     target="aries",
-                     core_mode="single",
-                     cluster_id=[0, 0, 0, 1, 1],
-                     core_id=[0, 1, 3, 2, 3])
+        model = YOLO("yolo26s_mobilint_model", task="detect")
+
+        # Register 5 cores on the first predict() — these are captured at backend
+        # load time and reused for every subsequent call on this YOLO instance.
+        mxq_cfg = dict(
+            target="aries",
+            core_mode="single",
+            cluster_id=[0, 0, 0, 1, 1],
+            core_id=[0, 1, 3, 2, 3],
+        )
 
         sources = ["frame0.jpg", "frame1.jpg", ...]  # many inputs
 
         def infer_one(src):
-            return model.predict(src)
+            return model.predict(src, **mxq_cfg)
 
         # 10 worker threads share the 5-core pool — qbruntime schedules each call
         # onto an available registered core.
@@ -287,7 +293,7 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         # The yolo CLI runs a single inference loop, so multi-core registration mainly
         # helps when you drive predict() from your own threaded code (Python). The list
         # form is still valid on the CLI:
-        yolo predict model=yolo26s.mxq task=detect \
+        yolo predict model=yolo26s_mobilint_model task=detect \
             target=aries core_mode=single cluster_id=[0,0,0,1,1] core_id=[0,1,3,2,3] \
             source=/path/to/frames/
         ```
@@ -300,41 +306,42 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
 | [Segmentation](https://docs.ultralytics.com/tasks/segment/)       | ✅     |
 | [Pose Estimation](https://docs.ultralytics.com/tasks/pose/)       | ✅     |
 | [Classification](https://docs.ultralytics.com/tasks/classify/)    | ✅     |
+| [Oriented Bounding Boxes](https://docs.ultralytics.com/tasks/obb/) | ✅     |
 
 ### Object Detection Task
 ```
 yolo export model=yolo26s.pt format=mxq target=aries core_mode=all data=coco128.yaml
-yolo predict model=yolo26s.mxq task=detect \
+yolo predict model=yolo26s_mobilint_model task=detect \
     target=aries core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s.mxq task=detect target=aries core_mode=global8 data=coco128.yaml
+yolo val model=yolo26s_mobilint_model task=detect target=aries core_mode=global8 data=coco128.yaml
 ```
 
 ### Segmentation Task
 ```
-yolo export model=yolo26s-seg.pt format=mxq target=aries core_mode=all data=coco128.yaml
-yolo predict model=yolo26s-seg.mxq task=segment \
+yolo export model=yolo26s-seg.pt format=mxq target=aries core_mode=all data=coco128-seg.yaml
+yolo predict model=yolo26s-seg_mobilint_model task=segment \
     target=aries core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s-seg.mxq task=segment target=aries core_mode=global8 data=coco128.yaml
+yolo val model=yolo26s-seg_mobilint_model task=segment target=aries core_mode=global8 data=coco128-seg.yaml
 ```
 
 ### Pose Estimation Task
 ```
 yolo export model=yolo26s-pose.pt format=mxq target=aries core_mode=all data=coco128.yaml
-yolo predict model=yolo26s-pose.mxq task=pose \
+yolo predict model=yolo26s-pose_mobilint_model task=pose \
     target=aries core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s-pose.mxq task=pose target=aries core_mode=global8 data=coco128.yaml
+yolo val model=yolo26s-pose_mobilint_model task=pose target=aries core_mode=global8 data=coco128.yaml
 ```
 
 ### Classification Task
 ```
 yolo export model=yolo26s-cls.pt imgsz=224 format=mxq target=aries core_mode=all data=imagenet100
-yolo predict model=yolo26s-cls.mxq task=classify imgsz=224 \
+yolo predict model=yolo26s-cls_mobilint_model task=classify imgsz=224 \
     target=aries core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s-cls.mxq task=classify imgsz=224 target=aries core_mode=global8 data=imagenet100
+yolo val model=yolo26s-cls_mobilint_model task=classify imgsz=224 target=aries core_mode=global8 data=imagenet100
 ```
 
 ## Real-World Applications
@@ -348,19 +355,59 @@ YOLO on Mobilint NPUs enables a range of edge deployments:
 
 ## Benchmarks
 
-<!-- TODO: fill in measured numbers from internal benchmarking -->
+Each cell shows the **MXQ measurement** (on ARIES) outside the parentheses, and the **official `.pt` benchmark** inside the parentheses.  
+[official Ultralytics YOLO26 benchmarks](https://docs.ultralytics.com/models/yolo26/).
 
-!!! tip "Performance"
+### Detect (COCO val2017)
 
-    | Model    | Target  | mAP50-95(B) | Inference time (ms/im) |
-    | -------- | ------- | ----------- | ---------------------- |
-    | YOLO26n  | `aries` | _TBD_       | _TBD_                  |
-    | YOLO26s  | `aries` | _TBD_       | _TBD_                  |
-    | YOLO26m  | `aries` | _TBD_       | _TBD_                  |
-    | YOLO26l  | `aries` | _TBD_       | _TBD_                  |
-    | YOLO26x  | `aries` | _TBD_       | _TBD_                  |
+| Model         | Size |     mAPval 50-95 |
+| ------------- | ---- | ---------------: |
+| `yolo26n.mxq` | 640  | _TBD_ (40.9) |
+| `yolo26s_mobilint_model` | 640  | _TBD_ (48.6) |
+| `yolo26m.mxq` | 640  | _TBD_ (53.1) |
+| `yolo26l.mxq` | 640  | _TBD_ (55.0) |
+| `yolo26x.mxq` | 640  | _TBD_ (57.5) |
 
-    Validation done on COCO val2017. Inference time excludes pre/post-processing.
+### Segment (COCO val2017)
+
+| Model             | Size | mAPval 50-95 (B) | mAPval 50-95 (M) |
+| ----------------- | ---- | ---------------: | ---------------: |
+| `yolo26n-seg.mxq` | 640  | _TBD_ (39.6) | _TBD_ (33.9) |
+| `yolo26s-seg_mobilint_model` | 640  | _TBD_ (47.3) | _TBD_ (40.0) |
+| `yolo26m-seg.mxq` | 640  | _TBD_ (52.5) | _TBD_ (44.1) |
+| `yolo26l-seg.mxq` | 640  | _TBD_ (54.4) | _TBD_ (45.5) |
+| `yolo26x-seg.mxq` | 640  | _TBD_ (56.5) | _TBD_ (47.0) |
+
+### Pose (COCO val2017)
+
+| Model              | Size | mAPval 50-95 (B) | mAPval 50-95 (P) |
+| ------------------ | ---- | ---------------: | ---------------: |
+| `yolo26n-pose.mxq` | 640  | _TBD_ (57.2) | _TBD_ (83.3) |
+| `yolo26s-pose_mobilint_model` | 640  | _TBD_ (63.0) | _TBD_ (86.6) |
+| `yolo26m-pose.mxq` | 640  | _TBD_ (68.8) | _TBD_ (89.6) |
+| `yolo26l-pose.mxq` | 640  | _TBD_ (70.4) | _TBD_ (90.5) |
+| `yolo26x-pose.mxq` | 640  | _TBD_ (71.6) | _TBD_ (91.6) |
+
+### Classify (ImageNet val)
+
+| Model             | Size |       Top-1 Acc |       Top-5 Acc |
+| ----------------- | ---- | --------------: | --------------: |
+| `yolo26n-cls.mxq` | 224  | _TBD_ (71.4) | _TBD_ (90.1) |
+| `yolo26s-cls_mobilint_model` | 224  | _TBD_ (76.0) | _TBD_ (92.9) |
+| `yolo26m-cls.mxq` | 224  | _TBD_ (78.1) | _TBD_ (94.2) |
+| `yolo26l-cls.mxq` | 224  | _TBD_ (79.0) | _TBD_ (94.6) |
+| `yolo26x-cls.mxq` | 224  | _TBD_ (79.9) | _TBD_ (95.0) |
+
+### OBB (DOTAv1 test)
+
+| Model             | Size | mAPtest 50-95 |  mAPtest 50 |
+| ----------------- | ---- | ------------: | ----------: |
+| `yolo26n-obb.mxq` | 1024 |  _TBD_ (52.4) | _TBD_ (78.9) |
+| `yolo26s-obb.mxq` | 1024 |  _TBD_ (54.8) | _TBD_ (80.9) |
+| `yolo26m-obb.mxq` | 1024 |  _TBD_ (55.3) | _TBD_ (81.0) |
+| `yolo26l-obb.mxq` | 1024 |  _TBD_ (56.2) | _TBD_ (81.6) |
+| `yolo26x-obb.mxq` | 1024 |  _TBD_ (56.7) | _TBD_ (81.7) |
+
 
 ## Recommended Workflow
 
@@ -388,7 +435,7 @@ model = YOLO("yolo26s.pt")
 model.export(format="mxq", target="aries", core_mode="single", data="coco8.yaml")
 ```
 
-This produces a single `yolo26s.mxq` file ready for deployment.
+This produces a single `yolo26s_mobilint_model` file ready for deployment.
 
 ### Which Mobilint hardware targets are supported?
 

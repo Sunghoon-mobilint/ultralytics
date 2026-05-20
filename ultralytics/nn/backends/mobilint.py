@@ -6,27 +6,18 @@ from pathlib import Path
 
 import torch
 
-from ultralytics.utils import LOGGER
+from ultralytics.utils import LOGGER, YAML
 from ultralytics.utils.checks import check_requirements
-from ultralytics.utils.export.mxq import (
-    format_mobilint_postprocess_output,
-    get_mobilint_model_zoo_post_cfg,
-)
+from ultralytics.utils.export.mxq import format_mobilint_postprocess_output
 
 from .base import BaseBackend
 
-_TASK_MAP = {
-    "object_detection": "detect",
-    "instance_segmentation": "segment",
-    "pose_estimation": "pose",
-    "image_classification": "classify",
-}
-
-_DEFAULT_DATA_FOR_TASK = {
-    "detect": "coco.yaml",
-    "segment": "coco.yaml",
-    "pose": "coco-pose.yaml",
-    "classify": "ImageNet.yaml",
+# Ultralytics task name → mblt-model-zoo `post_cfg["task"]` value expected by `build_postprocess`.
+_TASK_TO_MBLT = {
+    "detect": "object_detection",
+    "segment": "instance_segmentation",
+    "pose": "pose_estimation",
+    "classify": "image_classification",
 }
 
 
@@ -82,15 +73,19 @@ class MobilintBackend(BaseBackend):
         """Load a Mobilint MXQ model and resolve task / metadata.
 
         The .mxq itself contains only compiled head features (boxes, scores, optional mask
-        coefficients, optional proto). Class names, task type, and head dimensions come from
-        — in priority order:
+        coefficients, optional proto). All other information — class names, task type,
+        input size, head params (`reg_max` / `nl` / `nm` / `kpt_shape`) — comes from a
+        `metadata.yaml` sidecar written by the Ultralytics MXQ exporter and located next
+        to the `.mxq` file (typically inside a `*_mobilint_model/` directory).
 
-        1. Sidecar `<stem>.yaml` written by the Ultralytics MXQ exporter.
-        2. mblt-model-zoo `post_cfg` looked up by model stem (for HF pre-compiled YOLO models).
-        3. Hardcoded YOLO11/12 defaults (`reg_max=16`, `nl=3`) + COCO/ImageNet class names.
+        The sidecar is **required**. Filename-based heuristics (e.g. `mblt-model-zoo`
+        lookup keyed by stem) are intentionally not used — they fail on custom-named
+        artifacts and silently mis-decode custom-trained models with `nc != 80`.
 
         Args:
-            weight (str | Path): Path to a `.mxq` file or a directory containing one.
+            weight (str | Path): Path to a `*_mobilint_model/` directory (preferred), or
+                directly to the `.mxq` file inside one. The directory must also contain
+                `metadata.yaml`.
         """
         check_requirements("mobilint-qb-runtime==1.2.0")
         check_requirements("mblt_model_zoo==1.4.2")
@@ -107,51 +102,66 @@ class MobilintBackend(BaseBackend):
                 "the local path."
             )
 
+        sidecar = mxq_file.parent / "metadata.yaml"
+        if not sidecar.exists():
+            raise FileNotFoundError(
+                f"MXQ sidecar `metadata.yaml` not found at {sidecar}. The Ultralytics MXQ "
+                "exporter writes it alongside the `.mxq` inside `<stem>_mobilint_model/`. "
+                "Re-export with `model.export(format='mxq', ...)` to produce the sidecar, "
+                "or move the `.mxq` into a folder containing its matching `metadata.yaml`."
+            )
+        self.apply_metadata(YAML.load(sidecar))
+
         accelerator = Accelerator()
         model_config = ModelConfig()
         self._apply_core_mode(model_config)
         self.model = Model(str(mxq_file), model_config)
         self.model.launch(accelerator)
 
-        # mblt-model-zoo postprocess emits NMS-fused output, so the predictor's NMS must use
-        # its end2end shortcut. Force end2end=True regardless of what the sidecar reports —
-        # the original .pt's end2end flag describes the pre-export model, not the MXQ output.
+        # mblt-model-zoo postprocess currently emits NMS-fused output, so Ultralytics'
+        # predictor must take its end2end shortcut (skip NMS) — hence True. Flip to False
+        # once mblt-model-zoo is updated to emit raw NMS-free output and the backend
+        # forwards that through unchanged.
         self.end2end = True
 
-        # ── 2. mblt-model-zoo post_cfg (defaults: nc / nl / reg_max for known YOLO models) ──
-        post_cfg = get_mobilint_model_zoo_post_cfg(mxq_file.stem)
-
-        # Build the mblt-model-zoo postprocess pipeline used by forward()
-        pre_cfg = {"LetterBox": {"img_size": [640, 640]}}
-        self._mobilint_pp = build_postprocess(pre_cfg, post_cfg)
-
-        # ── 3. Resolve task (sidecar > post_cfg) ────────────────────────────────────────────
-        if not self.task:
-            zoo_task = _TASK_MAP.get(post_cfg.get("task"))
-            if zoo_task is None:
-                raise NotImplementedError(
-                    f"Cannot determine task for {mxq_file.name}. Ensure a sidecar "
-                    f"{mxq_file.with_suffix('.yaml').name} is present (written by the "
-                    f"Ultralytics MXQ exporter), or use a model name recognized by "
-                    f"mblt-model-zoo."
-                )
-            self.task = zoo_task
-
+        if self.task is None:
+            raise ValueError(
+                f"`metadata.yaml` at {sidecar} is missing the required `task` field. "
+                "Re-export with the Ultralytics MXQ exporter."
+            )
         if self.task == "pose" and not getattr(self, "kpt_shape", None):
             self.kpt_shape = [17, 3]
 
-        # ── 4. Fallback class names (HF pre-compiled / sidecar without names) ───────────────
-        if not self.names:
-            from ultralytics.nn.autobackend import default_class_names
+        # mblt-model-zoo postprocess pipeline used by forward()
+        imgsz = getattr(self, "imgsz", None) or [640, 640]
+        pre_cfg = {"LetterBox": {"img_size": list(imgsz)}}
+        self._mobilint_pp = build_postprocess(pre_cfg, self._build_post_cfg())
 
-            default_data = _DEFAULT_DATA_FOR_TASK.get(self.task)
-            if default_data is not None:
-                self.names = default_class_names(default_data)
-                LOGGER.info(
-                    f"MXQ: no sidecar class names for {mxq_file.name}; using defaults "
-                    f"from {default_data}. For custom-trained models, re-export with the "
-                    f"Ultralytics MXQ exporter to embed your model's class names."
-                )
+    def _build_post_cfg(self) -> dict:
+        """Assemble the mblt-model-zoo `post_cfg` for `build_postprocess`.
+
+        All values come from `self.metadata` (sidecar yaml). `nc` is derived from
+        `self.names` so custom-trained models with non-COCO class counts split the head
+        channels correctly. `reg_max <= 1` is mapped to mblt-model-zoo's `dflfree` flag
+        (YOLO26-style raw box deltas).
+        """
+        meta = self.metadata or {}
+        cfg = {
+            "task": _TASK_TO_MBLT[self.task],
+            "nc": len(self.names),
+            "nl": meta.get("nl", 3),
+        }
+        reg_max = meta.get("reg_max")
+        if reg_max is not None and reg_max > 1:
+            cfg["reg_max"] = reg_max
+        else:
+            cfg["dflfree"] = True
+        if self.task == "segment":
+            cfg["n_extra"] = meta.get("nm", 32)
+        elif self.task == "pose":
+            kh, kw = self.kpt_shape or (17, 3)
+            cfg["n_extra"] = kh * kw
+        return cfg
 
     def _apply_core_mode(self, model_config) -> None:
         """Configure qbruntime ModelConfig for the requested core_mode / cluster_id / core_id.

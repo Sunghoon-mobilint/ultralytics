@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-import ast
-import importlib
-import importlib.util
-import re
-from copy import deepcopy
 from pathlib import Path
 
 import torch
@@ -175,92 +170,6 @@ def attempt_download_mxq(file: str | Path, device: str, core_mode: str) -> str:
         local_dir=str(weights_dir),
     )
     return str(downloaded)
-
-
-def get_mobilint_model_zoo_post_cfg(model_name: str) -> dict:
-    """Get mblt-model-zoo postprocess config for an official YOLO model name."""
-
-    def import_cfg_classes(module_path: str) -> list:
-        spec = importlib.util.find_spec(module_path)
-        if spec is None or not spec.origin or spec.origin in {"built-in", "frozen"}:
-            raise ModuleNotFoundError(module_path)
-
-        cfg_classes = []
-        for yolo_file in Path(spec.origin).parent.glob("yolo*.py"):
-            tree = ast.parse(yolo_file.read_text(encoding="utf-8"), filename=str(yolo_file))
-            module = importlib.import_module(f"{module_path}.{yolo_file.stem}")
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef):
-                    cfg_classes.append(getattr(module, node.name))
-        return cfg_classes
-
-    def normalize_cfg_name(name: str) -> str:
-        return name.lower().replace("_set", "").replace("_", "")
-
-    def normalize_model_name(name: str) -> str:
-        value = Path(name).stem.lower()
-        value = value.replace("-ghost", "")
-        value = value.replace("-resnet18", "")
-        value = value.replace("-resnet50", "")
-        value = value.replace("-resnet101", "")
-        if "yolov5" in value:
-            value = value.replace("-p6", "6")
-        value = value.replace("-p6", "p6").replace("-p2", "p2")
-        value = value.replace("-spp", "spp").replace("-tiny", "tiny")
-        value = value.replace("-seg", "seg")
-        value = value.replace("-pose", "pose")
-        value = value.replace("-cls", "cls")
-        value = value.replace("-obb", "obb")
-        value = value.replace("yoloe-", "yolo")
-        value = value.replace("-worldv2", "")
-        value = value.replace("-world", "")
-        if "yolov6" in value:
-            value = re.sub(r"yolov6([nsmlx])", "yolov7x", value)
-        if "yolo12" in value and ("cls" in value or "pose" in value):
-            value = value.replace("yolo12", "yolo11")
-        return value
-
-    def guess_task(name: str) -> str:
-        normalized = normalize_model_name(name)
-        if "seg" in normalized:
-            return "seg"
-        if "pose" in normalized:
-            return "pose"
-        if "cls" in normalized:
-            return "cls"
-        if "obb" in normalized:
-            return "obb"
-        if "yolo" in normalized:
-            return "det"
-        return "unknown"
-
-    modules = {
-        "det": "mblt_model_zoo.vision.object_detection",
-        "seg": "mblt_model_zoo.vision.instance_segmentation",
-        "pose": "mblt_model_zoo.vision.pose_estimation",
-        "cls": "mblt_model_zoo.vision.image_classification",
-    }
-    task = guess_task(model_name)
-    if task not in modules:
-        return {}
-
-    cfgs = {}
-    for cfg_class in import_cfg_classes(modules[task]):
-        if hasattr(cfg_class, "DEFAULT"):
-            cfgs[normalize_cfg_name(cfg_class.__name__)] = cfg_class
-
-    normalized_name = normalize_model_name(model_name)
-    if normalized_name in cfgs:
-        return deepcopy(cfgs[normalized_name].DEFAULT.value.post_cfg)
-
-    if "p6" in normalized_name or "p2" in normalized_name:
-        alt_name = normalized_name.replace("p6", "").replace("p2", "")
-        if alt_name in cfgs:
-            cfg = deepcopy(cfgs[alt_name].DEFAULT.value.post_cfg)
-            cfg["nl"] = 4
-            return cfg
-
-    return {}
 
 
 def pad_mobilint_detections(detections: list[torch.Tensor]) -> torch.Tensor:

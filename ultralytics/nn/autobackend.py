@@ -111,7 +111,7 @@ class AutoBackend(nn.Module):
             | Triton Inference      | triton://model    |
             | ExecuTorch            | *.pte             |
             | Axelera AI            | *_axelera_model/  |
-            | Mobilint              | *.mxq             |
+            | Mobilint              | *_mobilint_model/ |
 
     Attributes:
         backend (BaseBackend): The loaded inference backend instance.
@@ -336,14 +336,18 @@ class AutoBackend(nn.Module):
         """
         from ultralytics.engine.exporter import export_formats
 
-        sf = export_formats()["Suffix"]
+        fmts = export_formats()
+        sf = fmts["Suffix"]
         if not is_url(p) and not isinstance(p, str):
             check_suffix(p, sf)
         name = Path(p).name
         types = [s in name for s in sf]
         types[5] |= name.endswith(".mlmodel")
         types[8] &= not types[9]
-        format = next((f for i, f in enumerate(export_formats()["Argument"]) if types[i]), None)
+        # Mobilint local exports are folders (`*_mobilint_model/`); HF-hosted artifacts are bare
+        # `.mxq` files. Accept either so HF auto-download paths still resolve to the mxq format.
+        types[fmts["Argument"].index("mxq")] |= name.endswith(".mxq")
+        format = next((f for i, f in enumerate(fmts["Argument"]) if types[i]), None)
         if format == "-":
             format = "pt"
         elif format == "onnx" and dnn:

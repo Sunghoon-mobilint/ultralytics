@@ -22,7 +22,7 @@ IMX                     | `imx`                     | yolo26n_imx_model/
 RKNN                    | `rknn`                    | yolo26n_rknn_model/
 ExecuTorch              | `executorch`              | yolo26n_executorch_model/
 Axelera AI              | `axelera`                 | yolo26n_axelera_model/
-Mobilint                | `mxq`                     | yolo26n.mxq
+Mobilint                | `mxq`                     | yolo26n_mobilint_model/
 
 Requirements:
     $ pip install "ultralytics[export]"
@@ -53,7 +53,7 @@ Inference:
                          yolo26n_rknn_model         # RKNN
                          yolo26n_executorch_model   # ExecuTorch
                          yolo26n_axelera_model      # Axelera AI
-                         yolo26n_mxq_model          # Mobilint
+                         yolo26n_mobilint_model     # Mobilint
 
 TensorFlow.js:
     $ cd .. && git clone https://github.com/zldrobit/tfjs-yolov5-example.git && cd tfjs-yolov5-example
@@ -161,7 +161,7 @@ def export_formats():
         ["RKNN", "rknn", "_rknn_model", False, False, ["batch", "name"]],
         ["ExecuTorch", "executorch", "_executorch_model", True, False, ["batch"]],
         ["Axelera AI", "axelera", "_axelera_model", False, False, ["batch", "int8", "fraction", "data"]],
-        ["Mobilint", "mxq", ".mxq", True, True, ["batch", "data"]],
+        ["Mobilint", "mxq", "_mobilint_model", True, True, ["batch", "fraction", "data"]],
     ]
     return dict(zip(["Format", "Argument", "Suffix", "CPU", "GPU", "Arguments"], zip(*x)))
 
@@ -1075,7 +1075,16 @@ class Exporter:
 
     @try_export
     def export_mxq(self, prefix=colorstr("MXQ:")):
-        """Export YOLO model to MXQ format."""
+        """Export YOLO model to MXQ format.
+
+        Produces a `<stem>_mobilint_model/` directory containing:
+            - `<stem>.mxq`     compiled artifact for qbruntime
+            - `metadata.yaml`  full export metadata (names, task, imgsz, head params)
+
+        The sidecar carries the postprocess parameters (`reg_max`, `nl`, `nm`, `kpt_shape`)
+        that `MobilintBackend` needs to build `mblt_model_zoo` post_cfg for custom-trained
+        models — the filename alone cannot encode `nc`/`reg_max`/etc.
+        """
         # qbcompiler_version = f"1.1.2+{self.args.device}torch2.7.1cu128"
         # check_requirements(f"qbcompiler=={qbcompiler_version}")
         import tempfile
@@ -1083,7 +1092,9 @@ class Exporter:
         from ultralytics.utils.export import onnx2mxq
         MAX_CALIB_SAMPLES = 500
 
-        save_path = os.path.abspath(Path(self.file).with_suffix(".mxq"))
+        output_dir = self.file.parent / f"{self.file.stem}_mobilint_model"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        save_path = os.path.abspath(output_dir / f"{self.file.stem}.mxq")
 
         # Export to ONNX
         if isinstance(self.model.model[-1], RTDETRDecoder):
@@ -1138,7 +1149,15 @@ class Exporter:
             prefix=prefix,
         )
 
-        return save_path
+        # Persist head params alongside the standard metadata so the backend can rebuild
+        # mblt_model_zoo post_cfg without falling back to filename-based lookup.
+        head = self.model.model[-1]
+        for k in ("reg_max", "nl", "nm"):
+            if hasattr(head, k):
+                self.metadata[k] = getattr(head, k)
+        YAML.save(output_dir / "metadata.yaml", self.metadata)
+
+        return str(output_dir)
 
     def _add_tflite_metadata(self, file):
         """Add metadata to *.tflite models per https://ai.google.dev/edge/litert/models/metadata."""
