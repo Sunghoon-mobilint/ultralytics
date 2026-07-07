@@ -92,6 +92,7 @@ def onnx2mxq(
         save_path=save_path,
         inference_scheme=core_mode,
         image_channels=3,
+        target_device=target,
         backend="onnx",
         device=device,
         preprocessing_config=preprocessing_config,
