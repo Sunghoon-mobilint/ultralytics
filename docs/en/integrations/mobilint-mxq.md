@@ -49,16 +49,13 @@ Select the `target` argument matching your device:
 
 | Target    | Description                                            |
 | :-------- | :----------------------------------------------------- |
-| `aries`   | ARIES NPU (8 cores — supports all `core_mode` options) |
-| `regulus` | Regulus NPU (single physical core — `single` only)     |
+| `aries-rb`   | ARIES NPU (8 cores — supports all `core_mode` options) |
+| `regulus-rb` | Regulus NPU (single physical core — `single` only)     |
 
 ## Core Modes
 
 ARIES is built from **2 physical clusters of 4 cores each (8 cores total)**. The `core_mode` argument selects how a compiled MXQ model maps onto this hardware. Pick the mode that matches your workload's throughput vs. latency profile.
 
-!!! note "Regulus is single-core"
-
-    Regulus has **only one physical core**, so `target=regulus` supports `core_mode=single` only. The multi-core modes (`multi`, `global4`, `global8`) apply to ARIES.
 
 | Mode      | Cores Used     | Optimized For                              |
 | :-------- | :------------- | :----------------------------------------- |
@@ -78,15 +75,18 @@ For more detail, see Mobilint's [Multi-Core Inference documentation](https://doc
 
 !!! warning "Platform Requirements"
 
-    - **Operating System**: Linux (Ubuntu 22.04 recommended)
-    - **Python**: 3.10+
-    - **Hardware (export)**: x86_64 host, GPU optional (accelerates calibration)
-    - **Hardware (inference)**: A Mobilint ARIES NPU device with the matching driver and `qbruntime` installed
+    - Operating System: Linux (Ubuntu 22.04 recommended)
+    - Python: 3.10+
+    - Hardware (export): x86_64 host, GPU optional (accelerates calibration)
+    - Hardware (inference): A Mobilint ARIES NPU device
+    - qbcompiler: v1.2.0
+    - qbruntime: v1.2.0
 
 ### Ultralytics Installation
 
 ```bash
-pip install ultralytics
+pip install ultralytics mobilint-qb-runtime
+pip install mobilint-qb-compiler --index-url https://dl.mobilint.com
 ```
 
 For detailed instructions, see the [Ultralytics Installation guide](../quickstart.md). If you encounter difficulties, consult the [Common Issues guide](../guides/yolo-common-issues.md).
@@ -112,7 +112,7 @@ Export your trained YOLO model with the standard Ultralytics `export` API. `targ
         # Export to MXQ format
         model.export(
             format="mxq",
-            target="aries",        # 'aries' | 'regulus'
+            target="aries",        # 'aries-rb' | 'regulus-rb'
             core_mode="single",    # 'single' | 'multi' | 'global4' | 'global8' | 'all'
             data="coco128.yaml",   # calibration dataset (recommended)
         )  # creates 'yolo26s_mobilint_model/'
@@ -121,7 +121,7 @@ Export your trained YOLO model with the standard Ultralytics `export` API. `targ
     === "CLI"
 
         ```bash
-        yolo export model=yolo26s.pt format=mxq target=aries core_mode=single data=coco128.yaml
+        yolo export model=yolo26s.pt format=mxq target=aries-rb core_mode=single data=coco128.yaml
         ```
 
 ### Export Arguments
@@ -129,7 +129,7 @@ Export your trained YOLO model with the standard Ultralytics `export` API. `targ
 | Argument    | Type             | Default          | Description                                                                                                            |
 | :---------- | :--------------- | :--------------- | :--------------------------------------------------------------------------------------------------------------------- |
 | `format`    | `str`            | `'mxq'`          | Target format for the exported model.                                                                                  |
-| `target`    | `str`            | **required**     | Mobilint hardware target: `aries` or `regulus`.                                                                        |
+| `target`    | `str`            | **required**     | Mobilint hardware target: `aries-rb` or `regulus-rb`.                                                                        |
 | `core_mode` | `str`            | **required**     | NPU core scheduling mode to compile for: `single`, `multi`, `global4`, `global8`, or `all`. Use `all` to compile one model that supports every runtime mode (see [Core Modes](#core-modes)). |
 | `imgsz`     | `int` or `tuple` | `640`            | Input image size — integer for square or `(height, width)` tuple.                                                      |
 | `batch`     | `int`            | `1`              | Calibration batch size and exported model batch dimension.                                                             |
@@ -170,7 +170,7 @@ Pass the exported folder (or a bare `.mxq` file from Hugging Face) to the Ultral
         # See "Selecting Cores at Inference Time" below for all options.
         results = model.predict(
             "https://ultralytics.com/images/bus.jpg",
-            target="aries",
+            target="aries-rb",
             core_mode="single",
             cluster_id=0,
             core_id=0,
@@ -185,7 +185,7 @@ Pass the exported folder (or a bare `.mxq` file from Hugging Face) to the Ultral
 
         ```bash
         yolo predict model=yolo12s.mxq task=detect \
-            target=aries core_mode=single cluster_id=0 core_id=0 \
+            target=aries-rb core_mode=single cluster_id=0 core_id=0 \
             source='https://ultralytics.com/images/bus.jpg'
         ```
 
@@ -217,16 +217,16 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         src = "https://ultralytics.com/images/bus.jpg"
 
         # single: run on Cluster0 / Core0
-        model.predict(src, target="aries", core_mode="single", cluster_id=0, core_id=0)
+        model.predict(src, target="aries-rb", core_mode="single", cluster_id=0, core_id=0)
 
         # multi: 4-image batch on Cluster0
-        model.predict(src, target="aries", core_mode="multi", cluster_id=0)
+        model.predict(src, target="aries-rb", core_mode="multi", cluster_id=0)
 
         # global4: 1 cluster (4 cores) cooperates on each image
-        model.predict(src, target="aries", core_mode="global4", cluster_id=0)
+        model.predict(src, target="aries-rb", core_mode="global4", cluster_id=0)
 
         # global8: all 8 cores cooperate on each image — no IDs needed
-        model.predict(src, target="aries", core_mode="global8")
+        model.predict(src, target="aries-rb", core_mode="global8")
         ```
 
         !!! tip "Switching modes on the same `YOLO` instance"
@@ -238,19 +238,19 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         ```bash
         # single: Cluster0 / Core0
         yolo predict model=yolo26s_mobilint_model task=detect \
-            target=aries core_mode=single cluster_id=0 core_id=0 source=https://ultralytics.com/images/bus.jpg
+            target=aries-rb core_mode=single cluster_id=0 core_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # multi: Cluster0
         yolo predict model=yolo26s_mobilint_model task=detect \
-            target=aries core_mode=multi cluster_id=0 source=https://ultralytics.com/images/bus.jpg
+            target=aries-rb core_mode=multi cluster_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # global4: Cluster0
         yolo predict model=yolo26s_mobilint_model task=detect \
-            target=aries core_mode=global4 cluster_id=0 source=https://ultralytics.com/images/bus.jpg
+            target=aries-rb core_mode=global4 cluster_id=0 source=https://ultralytics.com/images/bus.jpg
 
         # global8: no cluster/core args
         yolo predict model=yolo26s_mobilint_model task=detect \
-            target=aries core_mode=global8 source=https://ultralytics.com/images/bus.jpg
+            target=aries-rb core_mode=global8 source=https://ultralytics.com/images/bus.jpg
         ```
 
 !!! example "Advanced — registering multiple cores for parallel workloads (`single` only)"
@@ -270,7 +270,7 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         # Register 5 cores on the first predict() — these are captured at backend
         # load time and reused for every subsequent call on this YOLO instance.
         mxq_cfg = dict(
-            target="aries",
+            target="aries-rb",
             core_mode="single",
             cluster_id=[0, 0, 0, 1, 1],
             core_id=[0, 1, 3, 2, 3],
@@ -294,7 +294,7 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
         # helps when you drive predict() from your own threaded code (Python). The list
         # form is still valid on the CLI:
         yolo predict model=yolo26s_mobilint_model task=detect \
-            target=aries core_mode=single cluster_id=[0,0,0,1,1] core_id=[0,1,3,2,3] \
+            target=aries-rb core_mode=single cluster_id=[0,0,0,1,1] core_id=[0,1,3,2,3] \
             source=/path/to/frames/
         ```
 
@@ -312,36 +312,36 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
 ```
 yolo export model=yolo26s.pt format=mxq target=aries core_mode=all data=coco128.yaml
 yolo predict model=yolo26s_mobilint_model task=detect \
-    target=aries core_mode=single cluster_id=0 core_id=0 \
+    target=aries-rb core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s_mobilint_model task=detect target=aries core_mode=global8 data=coco128.yaml
+yolo val model=yolo26s_mobilint_model task=detect target=aries-rb core_mode=global8 data=coco128.yaml
 ```
 
 ### Segmentation Task
 ```
-yolo export model=yolo26s-seg.pt format=mxq target=aries core_mode=all data=coco128-seg.yaml
+yolo export model=yolo26s-seg.pt format=mxq target=aries-rb core_mode=all data=coco128-seg.yaml
 yolo predict model=yolo26s-seg_mobilint_model task=segment \
-    target=aries core_mode=single cluster_id=0 core_id=0 \
+    target=aries-rb core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s-seg_mobilint_model task=segment target=aries core_mode=global8 data=coco128-seg.yaml
+yolo val model=yolo26s-seg_mobilint_model task=segment target=aries-rb core_mode=global8 data=coco128-seg.yaml
 ```
 
 ### Pose Estimation Task
 ```
-yolo export model=yolo26s-pose.pt format=mxq target=aries core_mode=all data=coco128.yaml
+yolo export model=yolo26s-pose.pt format=mxq target=aries-rb core_mode=all data=coco128.yaml
 yolo predict model=yolo26s-pose_mobilint_model task=pose \
-    target=aries core_mode=single cluster_id=0 core_id=0 \
+    target=aries-rb core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s-pose_mobilint_model task=pose target=aries core_mode=global8 data=coco128.yaml
+yolo val model=yolo26s-pose_mobilint_model task=pose target=aries-rb core_mode=global8 data=coco128.yaml
 ```
 
 ### Classification Task
 ```
-yolo export model=yolo26s-cls.pt imgsz=224 format=mxq target=aries core_mode=all data=imagenet100
+yolo export model=yolo26s-cls.pt imgsz=224 format=mxq target=aries-rb core_mode=all data=imagenet100
 yolo predict model=yolo26s-cls_mobilint_model task=classify imgsz=224 \
-    target=aries core_mode=single cluster_id=0 core_id=0 \
+    target=aries-rb core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s-cls_mobilint_model task=classify imgsz=224 target=aries core_mode=global8 data=imagenet100
+yolo val model=yolo26s-cls_mobilint_model task=classify imgsz=224 target=aries-rb core_mode=global8 data=imagenet100
 ```
 
 ## Real-World Applications
@@ -439,7 +439,7 @@ This produces a single `yolo26s_mobilint_model` file ready for deployment.
 
 ### Which Mobilint hardware targets are supported?
 
-`aries` and `regulus`.
+`aries-rb` and `regulus-rb`.
 
 ### What does `core_mode` control?
 
