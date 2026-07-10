@@ -90,6 +90,10 @@ simplify: True # (bool) ONNX/engine only; run graph simplifier for cleaner ONNX 
 opset: # (int, optional) ONNX/engine only; opset version for export; leave unset to use a tested default
 workspace: # (float, optional) engine (TensorRT) only; workspace size in GiB, e.g. 4
 nms: False # (bool) fuse NMS into exported model when backend supports; if True, conf/iou apply (agnostic_nms except coreml)
+target: # (str, optional) Mobilint hardware tier for format=mxq export — 'aries' | 'regulus'
+core_mode: # (str, optional) Mobilint .mxq core scheduling — export accepts 'single' | 'multi' | 'global4' | 'global8' | 'all' (compile for any); predict accepts the four real modes only
+cluster_id: # (int | list[int], optional) Mobilint cluster ID(s) for format=mxq predict — e.g. 0, 1, [0, 1]; meaning depends on core_mode (paired with core_id in 'single', cluster list in 'multi'/'global4', ignored in 'global8')
+core_id: # (int | list[int], optional) Mobilint core ID(s) for format=mxq predict — used with core_mode='single', paired element-wise with cluster_id (each pair selects one of the 4 cores in that cluster)
 
 # Hyperparameters ------------------------------------------------------------------------------------------------------
 lr0: 0.01 # (float) initial learning rate (SGD=1e-2, Adam/AdamW=1e-3)

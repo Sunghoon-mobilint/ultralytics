@@ -185,6 +185,9 @@ class BaseValidator:
                 dnn=self.args.dnn,
                 data=self.args.data,
                 fp16=self.args.quantize == 16,
+                core_mode=getattr(self.args, "core_mode", None),
+                cluster_id=getattr(self.args, "cluster_id", None),
+                core_id=getattr(self.args, "core_id", None),
             )
             self.device = model.device  # update device
             self.args.quantize = 16 if model.fp16 else None  # record actual inference precision

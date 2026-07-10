@@ -20,6 +20,7 @@ IMX                     | `imx`                     | yolo26n_imx_model/
 RKNN                    | `rknn`                    | yolo26n_rknn_model/
 ExecuTorch              | `executorch`              | yolo26n_executorch_model/
 Axelera AI              | `axelera`                 | yolo26n_axelera_model/
+Mobilint                | `mxq`                     | yolo26n_mobilint_model/
 DEEPX                   | `deepx`                   | yolo26n_deepx_model/
 Qualcomm QNN            | `qnn`                     | yolo26n_qnn.onnx
 LiteRT                  | `litert`                  | yolo26n.tflite
@@ -54,6 +55,7 @@ Inference:
                          yolo26n_rknn_model         # RKNN
                          yolo26n_executorch_model   # ExecuTorch
                          yolo26n_axelera_model      # Axelera AI
+                         yolo26n_mobilint_model     # Mobilint
                          yolo26n_deepx_model        # DEEPX
                          yolo26n_qnn.onnx           # Qualcomm QNN
                          yolo26n.tflite             # LiteRT
@@ -208,6 +210,7 @@ def export_formats():
             ["batch", "quantize", "fraction", "data"],
             "isolated-axelera",
         ],
+        ["Mobilint", "mxq", "_mobilint_model", True, True, ["batch", "fraction", "data"], "base"],
         ["DEEPX", "deepx", "_deepx_model", False, False, ["data", "quantize", "optimize"], "isolated-deepx"],
         ["Qualcomm QNN", "qnn", "_qnn.onnx", False, False, ["batch", "name", "quantize", "fraction", "data"], "base"],
         ["LiteRT", "litert", ".tflite", True, False, ["batch", "quantize", "data", "fraction"], "litert"],
@@ -359,13 +362,14 @@ INT8_FORMATS = frozenset(
         "axelera",
         "deepx",
         "litert",
+        "mxq",
     }
 )
 W8A16_FORMATS = frozenset(
     {"coreml", "imx", "qnn", "litert"}
 )  # INT8 weights + 16-bit activations (FP16; INT16 on LiteRT)
 W8A32_FORMATS = frozenset({"litert"})  # INT8 weights + FP32 activations (dynamic/weight-only INT8, no calibration)
-FP32_UNSUPPORTED_FORMATS = frozenset({"edgetpu", "imx", "rknn", "axelera", "deepx", "qnn"})
+FP32_UNSUPPORTED_FORMATS = frozenset({"edgetpu", "imx", "rknn", "axelera", "deepx", "qnn", "mxq"})
 # (label, supporting formats) per quantize precision, used to list valid options in errors. 32/None (FP32) is universal except FP32_UNSUPPORTED_FORMATS.
 QUANTIZE_PRECISIONS = (
     ("16 (FP16)", FP16_FORMATS),
@@ -472,6 +476,7 @@ class Exporter:
         export_imx: Export model to IMX format.
         export_executorch: Export model to ExecuTorch format.
         export_axelera: Export model to Axelera format.
+        export_mxq: Export model to Mobilint format.
         export_deepx: Export model to DEEPX format.
 
     Examples:
@@ -548,7 +553,7 @@ class Exporter:
         # Argument compatibility checks
         fmt_keys = dict(zip(fmts_dict["Argument"], fmts_dict["Arguments"]))[fmt]
         validate_args(fmt, self.args, fmt_keys)
-        if fmt in {"deepx", "axelera", "imx", "edgetpu", "qnn"} and self.args.quantize not in {8, "w8a16"}:
+        if fmt in {"deepx", "axelera", "imx", "edgetpu", "qnn", "mxq"} and self.args.quantize not in {8, "w8a16"}:
             if self.args.quantize == 32:
                 raise ValueError(
                     f"{fmt} export only supports INT8, but got an explicit quantize=32 (FP32) request. "
@@ -569,6 +574,10 @@ class Exporter:
                 raise ValueError(
                     "IMX export only supported for detection, pose estimation, classification, and segmentation models."
                 )
+        if fmt == "mxq":
+            if not self.args.data:
+                LOGGER.warning("MXQ export requires data arg, setting data='coco128.yaml'.")
+                self.args.data = "coco128.yaml"
         if not hasattr(model, "names"):
             model.names = default_class_names()
         model.names = check_class_names(model.names)
@@ -1370,6 +1379,92 @@ class Exporter:
             dataset=partial(self.get_int8_calibration_dataloader, prefix),
             prefix=prefix,
         )
+
+    @try_export
+    def export_mxq(self, prefix=colorstr("MXQ:")):
+        """Export YOLO model to MXQ format.
+
+        Produces a `<stem>_mobilint_model/` directory containing:
+            - `<stem>.mxq`     compiled artifact for qbruntime
+            - `metadata.yaml`  full export metadata (names, task, imgsz, head params)
+
+        The sidecar carries the postprocess parameters (`reg_max`, `nl`, `nm`, `kpt_shape`)
+        that `MobilintBackend` needs to build `mblt_model_zoo` post_cfg for custom-trained
+        models — the filename alone cannot encode `nc`/`reg_max`/etc.
+        """
+        # qbcompiler_version = f"1.1.2+{self.args.device}torch2.7.1cu128"
+        # check_requirements(f"qbcompiler=={qbcompiler_version}")
+        import tempfile
+        from PIL import Image
+        from ultralytics.utils.export import onnx2mxq
+        MAX_CALIB_SAMPLES = 500
+
+        output_dir = self.file.parent / f"{self.file.stem}_mobilint_model"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        save_path = os.path.abspath(output_dir / f"{self.file.stem}.mxq")
+
+        # Export to ONNX
+        if isinstance(self.model.model[-1], RTDETRDecoder):
+            self.args.opset = self.args.opset or 19
+            assert 16 <= self.args.opset <= 19, "RTDETR export requires opset>=16;<=19"
+        f_onnx = self.export_onnx()  # ensure ONNX is available
+
+        # Prepare calibration data
+        temp_calib_path = tempfile.mkdtemp(prefix=f"ultralytics_{self.model.task}_calib_")
+        if self.args.data:
+            LOGGER.info(f"{prefix} Preparing calibration data in {temp_calib_path}...")
+            images = (img for batch in self.get_int8_calibration_dataloader(prefix) for img in batch["img"])
+            for item_count, img in enumerate(images):
+                img = Image.fromarray(img.permute(1, 2, 0).numpy().astype(np.uint8))
+                img_path = Path(temp_calib_path) / f"calib_{item_count}.png"
+                img.save(img_path)
+
+                if item_count + 1 >= MAX_CALIB_SAMPLES:
+                    break
+
+        use_random_calib = False
+        if os.listdir(temp_calib_path) == []:
+            LOGGER.warning(f"{prefix} No calibration data found, proceeding with random input calibration.")
+            LOGGER.warning(f"{prefix} This may lead to drop in accuracy after quantization.")
+            temp_calib_path = None
+            use_random_calib = True
+        else:
+            LOGGER.info(f"{prefix} Using {len(os.listdir(temp_calib_path))} samples for calibration.")
+
+        device = "gpu" if torch.cuda.is_available() else "cpu"
+
+        target = getattr(self.args, "target", None)
+        core_mode = getattr(self.args, "core_mode", None)
+        if not target:
+            raise ValueError("MXQ export requires 'target=' arg (e.g. 'aries-rb' | 'regulus-rb').")
+        if not core_mode:
+            raise ValueError(
+                "MXQ export requires 'core_mode=' arg "
+                "(one of 'single' | 'multi' | 'global4' | 'global8' | 'all')."
+            )
+
+        onnx2mxq(
+            onnx_file=f_onnx,
+            save_path=save_path,
+            target=target,
+            core_mode=core_mode,
+            task=self.model.task,
+            calib_path=temp_calib_path,
+            use_random_calib=use_random_calib,
+            imgsz=self.args.imgsz,
+            device=device,
+            prefix=prefix,
+        )
+
+        # Persist head params alongside the standard metadata so the backend can rebuild
+        # mblt_model_zoo post_cfg without falling back to filename-based lookup.
+        head = self.model.model[-1]
+        for k in ("reg_max", "nl", "nm"):
+            if hasattr(head, k):
+                self.metadata[k] = getattr(head, k)
+        YAML.save(output_dir / "metadata.yaml", self.metadata)
+
+        return str(output_dir)
 
     @try_export
     def export_deepx(self, prefix=colorstr("DEEPX:")):

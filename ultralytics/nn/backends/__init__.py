@@ -23,6 +23,7 @@ from .rknn import RKNNBackend
 from .tensorflow import TensorFlowBackend
 from .tensorrt import TensorRTBackend
 from .triton import TritonBackend
+from .mobilint import MobilintBackend
 
 __all__ = [
     "AxeleraBackend",
@@ -44,4 +45,5 @@ __all__ = [
     "TensorRTBackend",
     "TorchScriptBackend",
     "TritonBackend",
+    "MobilintBackend",
 ]

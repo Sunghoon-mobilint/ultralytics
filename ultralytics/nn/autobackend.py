@@ -31,6 +31,7 @@ from .backends import (
     TensorRTBackend,
     TorchScriptBackend,
     TritonBackend,
+    MobilintBackend,
 )
 
 
@@ -112,6 +113,7 @@ class AutoBackend(nn.Module):
             | Triton Inference      | triton://model    |
             | ExecuTorch            | *.pte             |
             | Axelera AI            | *_axelera_model/  |
+            | Mobilint              | *_mobilint_model/ |
             | DEEPX                 | *_deepx_model/    |
             | Qualcomm QNN          | *_qnn.onnx        |
             | LiteRT                | *.tflite          |
@@ -157,6 +159,7 @@ class AutoBackend(nn.Module):
         "triton": TritonBackend,
         "executorch": ExecuTorchBackend,
         "axelera": AxeleraBackend,
+        "mxq": MobilintBackend,
         "deepx": DeepXBackend,
         "qnn": QNNBackend,
         "litert": LiteRTBackend,
@@ -172,6 +175,7 @@ class AutoBackend(nn.Module):
         fp16: bool = False,
         fuse: bool = True,
         verbose: bool = True,
+        **kwargs: Any,
     ):
         """Initialize the AutoBackend for inference.
 
@@ -183,6 +187,10 @@ class AutoBackend(nn.Module):
             fp16 (bool): Enable half-precision inference. Supported only on specific backends.
             fuse (bool): Fuse Conv2D + BatchNorm layers for optimization.
             verbose (bool): Enable verbose logging.
+            **kwargs (Any): Vendor-specific backend options. Forwarded to the underlying backend
+                only when its format matches (e.g. `core_mode` / `cluster_id` / `core_id` for
+                Mobilint MXQ). Unrecognized kwargs are silently ignored for other formats so
+                callers can pass them unconditionally without knowing the model's format.
         """
         super().__init__()
         # Determine model format from path/URL
@@ -196,7 +204,7 @@ class AutoBackend(nn.Module):
             isinstance(device, torch.device)
             and torch.cuda.is_available()
             and device.type != "cpu"
-            and format not in {"pt", "torchscript", "engine", "onnx", "paddle"}
+            and format not in {"pt", "torchscript", "engine", "onnx", "paddle", "mxq"}
         ):
             device = torch.device("cpu")
 
@@ -216,9 +224,11 @@ class AutoBackend(nn.Module):
             backend_kwargs["verbose"] = verbose
         elif format in {"saved_model", "pb", "edgetpu", "dnn"}:
             backend_kwargs["format"] = format
+        elif format == "mxq":
+            backend_kwargs.update(kwargs)
         self.backend = self._BACKEND_MAP[format](model, **backend_kwargs)
 
-        self.nhwc = format in {"coreml", "saved_model", "pb", "edgetpu", "rknn"}
+        self.nhwc = format in {"coreml", "saved_model", "pb", "edgetpu", "rknn", "mxq"}
         self.format = format
 
         # Ensure backend has names (fallback to default if not set by metadata)
@@ -333,14 +343,19 @@ class AutoBackend(nn.Module):
         """
         from ultralytics.engine.exporter import export_formats
 
-        sf = export_formats()["Suffix"]
+        fmts = export_formats()
+        sf = fmts["Suffix"]
         if not is_url(p) and not isinstance(p, str):
             check_suffix(p, sf)
         name = Path(p).name
         types = [s in name for s in sf]
         types[5] |= name.endswith(".mlmodel")
         format = next((f for i, f in enumerate(export_formats()["Argument"]) if types[i]), None)
-        if name.endswith("_qnn.onnx"):  # QNN context-binary file otherwise matches the plain '.onnx' suffix
+        # Mobilint local exports are folders (`*_mobilint_model/`); HF-hosted artifacts are bare
+        # `.mxq` files. Accept either so HF auto-download paths still resolve to the mxq format.
+        if name.endswith(".mxq"):
+            format = "mxq"
+        elif name.endswith("_qnn.onnx"):  # QNN context-binary file otherwise matches the plain '.onnx' suffix
             format = "qnn"
         elif name.endswith(".tflite") and not name.endswith("_edgetpu.tflite"):
             format = "litert"  # bare .tflite files (incl. legacy TFLite exports) load via LiteRT
