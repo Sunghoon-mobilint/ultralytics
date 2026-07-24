@@ -204,7 +204,7 @@ class AutoBackend(nn.Module):
             isinstance(device, torch.device)
             and torch.cuda.is_available()
             and device.type != "cpu"
-            and format not in {"pt", "torchscript", "engine", "onnx", "paddle", "mxq"}
+            and format not in {"pt", "torchscript", "engine", "onnx", "paddle"}
         ):
             device = torch.device("cpu")
 
