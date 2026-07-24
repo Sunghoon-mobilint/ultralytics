@@ -112,16 +112,16 @@ Export your trained YOLO model with the standard Ultralytics `export` API. `targ
         # Export to MXQ format
         model.export(
             format="mxq",
-            target="aries",        # 'aries-rb' | 'regulus-rb'
+            target="aries-rb",        # 'aries-rb' | 'regulus-rb'
             core_mode="single",    # 'single' | 'multi' | 'global4' | 'global8' | 'all'
-            data="coco128.yaml",   # calibration dataset (recommended)
+            data="coco8.yaml",   # calibration dataset (recommended)
         )  # creates 'yolo26s_mobilint_model/'
         ```
 
     === "CLI"
 
         ```bash
-        yolo export model=yolo26s.pt format=mxq target=aries-rb core_mode=single data=coco128.yaml
+        yolo export model=yolo26s.pt format=mxq target=aries-rb core_mode=single data=coco8.yaml
         ```
 
 ### Export Arguments
@@ -310,29 +310,29 @@ Recall ARIES has **2 clusters × 4 cores = 8 cores total**. Which arguments to p
 
 ### Object Detection Task
 ```
-yolo export model=yolo26s.pt format=mxq target=aries core_mode=all data=coco128.yaml
+yolo export model=yolo26s.pt format=mxq target=aries-rb core_mode=all data=coco8.yaml
 yolo predict model=yolo26s_mobilint_model task=detect \
     target=aries-rb core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s_mobilint_model task=detect target=aries-rb core_mode=global8 data=coco128.yaml
+yolo val model=yolo26s_mobilint_model task=detect target=aries-rb core_mode=global8 data=coco8.yaml
 ```
 
 ### Segmentation Task
 ```
-yolo export model=yolo26s-seg.pt format=mxq target=aries-rb core_mode=all data=coco128-seg.yaml
+yolo export model=yolo26s-seg.pt format=mxq target=aries-rb core_mode=all data=coco8-seg.yaml
 yolo predict model=yolo26s-seg_mobilint_model task=segment \
     target=aries-rb core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s-seg_mobilint_model task=segment target=aries-rb core_mode=global8 data=coco128-seg.yaml
+yolo val model=yolo26s-seg_mobilint_model task=segment target=aries-rb core_mode=global8 data=coco8-seg.yaml
 ```
 
 ### Pose Estimation Task
 ```
-yolo export model=yolo26s-pose.pt format=mxq target=aries-rb core_mode=all data=coco128.yaml
+yolo export model=yolo26s-pose.pt format=mxq target=aries-rb core_mode=all data=coco8-pose.yaml
 yolo predict model=yolo26s-pose_mobilint_model task=pose \
     target=aries-rb core_mode=single cluster_id=0 core_id=0 \
     source=https://ultralytics.com/images/bus.jpg
-yolo val model=yolo26s-pose_mobilint_model task=pose target=aries-rb core_mode=global8 data=coco128.yaml
+yolo val model=yolo26s-pose_mobilint_model task=pose target=aries-rb core_mode=global8 data=coco8-pose.yaml
 ```
 
 ### Classification Task
@@ -432,7 +432,7 @@ Use the standard `export` API with `format="mxq"`, plus the required `target` an
 from ultralytics import YOLO
 
 model = YOLO("yolo26s.pt")
-model.export(format="mxq", target="aries", core_mode="single", data="coco8.yaml")
+model.export(format="mxq", target="aries-rb", core_mode="single", data="coco8.yaml")
 ```
 
 This produces a single `yolo26s_mobilint_model` file ready for deployment.
